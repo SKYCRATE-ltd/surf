@@ -11,7 +11,7 @@ import {
 	is
 } from "crux";
 import {
-	Emitter
+	Type, Emitter
 } from "zed";
 
 const COLON = ':';
@@ -19,20 +19,40 @@ const EQUAL = '=';
 const PIPE = '|';
 const SLASH = '/';
 const AND = '&';
+const TYPED_ARRAY = Uint8Array.constructor.__proto__; // <-- TypedArray is tricky to get.
 const DO_NOTHING = x => x;
+const CONCAT = (a, b) => {
+	// can't handle directories with dots in them... TODO: fix this...
+	return `${a}/${b}`.replace(/\/\.\//g, '/').replace(/\/[\w-]+\/\.\.\//g, '/');
+}
 const BUFF = buffer =>
 				buffer.buffer.slice(
 					buffer.byteOffset,
 					buffer.byteOffset + buffer.byteLength
 				);
 const QUERY = query =>
-	Object.fromEntries(new Map(
-		query
+	query ? Object.fromEntries(new Map(
+		query.trim()
 			.split(AND)
-			.map(pair => pair.split(EQUAL))
-	));
+			.map(x => x.trim())
+			.filter(DO_NOTHING) // Surprisingly, this does smthg; it removes empty strings!
+			.map(pair =>
+				pair.split(EQUAL)
+					.map(x => x.trim())
+					.filter(DO_NOTHING)
+			)
+	)) : {};
 
-export const YIELD = Symbol('yield');
+class Binary extends Type {
+	static defines(instance) {
+		return instance instanceof ArrayBuffer ||
+				// instance instanceof DataView || // <-- Would this be consistent?
+					instance.constructor.__proto__ === TYPED_ARRAY;
+	}
+}
+
+export const YIELD = Symbol('request yield');
+export const HANDLED = Symbol('request handled')
 export const STATUS = http.STATUS_CODES.map(
 				([code, desc]) => [
 					desc
@@ -63,14 +83,18 @@ export class Request extends Type({
 	method: String,
 	uri: String,
 	route: String,
-	query: Object,
 }) {
-	#request;
-	#response;
+	#request; // <-- uWS
+	#response; // <-- Surf
+	#middleware = [];
+
+	get ip() {
+		return this.#response.ip;
+	}
 
 	get headers() {
-		const headers = {}; // REMOVE THIS (PROBABLY)
-		this.#request.forEach((key, value) => headers[key] = value);
+		const headers = [];
+		this.#request.forEach((key, value) => headers.push([key, value]));
 		return headers;
 	}
 
@@ -82,93 +106,113 @@ export class Request extends Type({
 				.map((param, index) => [param, req.getParameter(index)]);
 	}
 
+	get query() {
+		return QUERY(this.#request.getQuery());
+	}
+
+	get host() {
+		return this.header('host');
+	}
+ 
 	get filename() {
 		return this.uri.split(SLASH).pop();
 	}
 
-	constructor(route, res, req, query = req.getQuery()) {
-		this.#request = req;
-		this.#response = res;
-		this.route = route;
-		this.uri = req.getUrl();
-		this.method = req.getMethod().toUpperCase();
-		this.query = query ? QUERY(query) : {};
+	get type() {
+		return this.header('content-type') || 'text/plain'; // <-- or text/html?
+	}
+
+	constructor(route, req, res, middleware) {
+		super({
+			route: route,
+			uri: req.getUrl(),
+			method: req.getMethod().toUpperCase(),
+		});
+		res.init(this);
+		
+		this.#request = req; // uWS
+		this.#response = res; // Surf
+		this.#middleware = middleware;
 	}
 
 	header(key) {
 		return this.#request.getHeader(key);
 	}
 
-	stream(ondata = DO_NOTHING, onabort = DO_NOTHING) {
+	body(ondone, onerror = DO_NOTHING) {
+		if (!is.function(ondone))
+			return new Promise((resolve, reject) => this.body(resolve, reject));
+
 		const res = this.#response;
-		res.ondata((payload, isdone) => ondata(Buffer.from(payload), isdone));
-		res.onabort(onabort);
-	}
 
-	data(handler, success, onerror = DO_NOTHING, onabort) {
 		let buffer;
-		this.stream((chunk, isdone) => {
-			buffer = buffer ? Buffer.concat([buffer, chunk]) : Buffer.concat([chunk]);
+		res.ondata((payload, isdone) => {
+			const chunk = Buffer.from(payload);
+			buffer = Buffer.concat(buffer ? [buffer, chunk] : [chunk]);
 			if (isdone) {
-				let data;
-				try {
-					data = handler(buffer);
-				} catch(e) {
-					onerror(buffer);
-					return res.close();
+				const middleware = this.#middleware;
+				for (let [condition, hook] in middleware) {
+					if (condition(this)) {
+						let output = hook(buffer, this, res);
+						if (!is.undefined(output) && output !== YIELD) {
+							buffer = output;
+							break;
+						}
+					}
+					
 				}
-				success(data);
+				buffer === HANDLED ?
+					onerror(
+						`${
+							this.#request.status
+						} ${
+							http.STATUS_CODES[this.#request.status]
+						}`) :
+						ondone(buffer);
 			}
-		}, onabort);
+		});
+
+
+	}
+	
+	bad_request(body = `${STATUS.BadRequest} BAD REQUEST`) {
+		this.#response.send(body, STATUS.BadRequest);
+		return HANDLED;
 	}
 
-	text(success, onerror, onabort) {
-		return this.data(String, success, onerror, onabort);
-	}
-
-	json(success, onerror, onabort) {
-		return this.data(JSON.parse, success, onerror, onabort);
-	}
-
-	form(success, onerror, onabort) {
-		return this.data(buffer => QUERY(String(buffer)), success, onerror, onabort);
-	}
-
-	body(success, onerror, onabort) {
-		const type = this.header('content-type');
-		// TODO: some middleware to read content-type and, if handled, parse our type...
-		// TODO: uploading a file... might need to read some stuff...
-		if (type === 'application/x-www-form-urlencoded')
-			return this.form(success, onerror, onabort);
-		if (type === 'application/json')
-			return this.json(success, onerror, onabort);
-		return this.text(success, onerror, onabort);
+	bad_method(
+		body = `${STATUS.MethodNotAllowed} METHOD '${this.method}' NOT ALLOWED/SUPPORTED`
+	) {
+		return this.#response.send(body, STATUS.MethodNotAllowed);
 	}
 
 	yield(yield = true) {
-		return this.#request.setYield(yield);
+		return this.#request.setYield(yield) && YIELD;
 	}
 }
 
 export class Response extends Type {
-	#request;
-	#response;
-	#aborted = false;
-	#onabort = DO_NOTHING;
+	#request; // <-- Surf
+	#response; // <-- uWS
+	#middleware = [];
 	
 	#id = [];
 	#title = [];
+	#status = '200';
 	#headers = [];
 	#timestamp = 0;
 
-	// Get the time since this request was created (in ms)
-	get time() {
-		return Date.now() - this.#timestamp;
+	#aborted = false;
+	#onabort = DO_NOTHING;
+	#sends = 0;
+
+	get status() {
+		return this.#status;
 	}
 
-	// Sometimes, the user bails on a request.
-	get aborted() {
-		return this.#aborted;
+	get ip() {
+		// TODO: Improve this!
+		return String(this.#response.getRemoteAddressAsText());
 	}
 
 	get id() {
@@ -197,106 +241,35 @@ export class Response extends Type {
 				more_headers : Object.entries(more_headers));
 	}
 
-	header(key, value) {
-		this.#headers.push([key, value]);
-		return this;
+	// Get the time since this request was created (in ms)
+	get time() {
+		return Date.now() - this.#timestamp;
 	}
 
-	constructor(res, req, now = Date.now()) {
-		super();
-		this.#request = req;
-		this.#response = res;
-		this.#timestamp = now;
+	get aborted() {
+		return this.#aborted;
+	}
 
-		req.onAborted(() => {
+	constructor(res, middleware) {
+		super();
+		this.#response = res; // uWS...
+		this.#middleware = middleware;
+		this.#timestamp = Date.now();
+
+		res.onAborted(() => {
 			this.#aborted = true;
 			this.#onabort();
 		});
 	}
 
-	yield(yield = true) {
-		this.#request.setYield(yield);
-	}
-
-	redirect(Location = '/', status = STATUS.Found) {
-		const ALLOWED = [
-			STATUS.Found,
-			STATUS.MovedPermanently,
-			STATUS.TemporaryRedirect,
-			STATUS.PermanentRedirect
-		];
-		this.send(null, status, {Location});
-	}
-
-	created_resource(Location, body = null) {
-		this.send(body, STATUS.Created, {Location})
-	}
-
-	not_found(body) {
-		this.send(body, STATUS.NotFound);
-	}
-
-	bad_request(body) {
-		this.send(body, STATUS.BadRequest);
-	}
-
-	bad_method(body) {
-		this.send(body, STATUS.MethodNotAllowed);
-	}
-
-	unauthorized(realm = "Access to privileged data.", ...types) {
-		if (!types.length)
-			types.push('Basic');
-		this.send(
-			null,
-			STATUS.Unauthorized,
-			types.map(
-				type =>
-					["WWW-Authenticate", `${type} realm="${realm}", charset="UTF-8"`]
-			)
-		);
-	}
-
-	timeout(body) {
-		this.send(body, STATUS.RequestTimeout);
-	}
-
-	teapot(body) {
-		this.send(body, STATUS.ImaTeapot);
-	}
-
-	close() {
-		this.#response.close();
-	}
-
-	ondata(callback) {
-		this.#response.onData(callback); // <-- TODO: wrap callback for event?
+	init(req) {
+		this.#request = req; // Surf...
 		return this;
 	}
 
-	onwrite(callback) {
-		this.#response.onWritable(callback); // <-- TODO: wrap callback for event?
+	header(key, value) {
+		this.#headers.push([key, value]);
 		return this;
-	}
-
-	onabort(callback) {
-		this.#onabort = callback;
-		return this;
-	}
-	
-	send(body, status = STATUS.OK, headers = []) {
-		if (this.#aborted)
-			return;
-		const res = this.#response;
-		this.headers = headers; // Append new headers
-		headers = this.headers;
-
-		// TODO: add middleware
-		res.cork(() => {
-			res.writeStatus(status);
-			headers.forEach(([key, value]) => res.writeHeader(key, value));
-			body ? res.end(body) : res.end();
-		});
 	}
 
 	send_buffer(buffer, size, success, rs) {
@@ -307,11 +280,95 @@ export class Response extends Type {
 		}
 		return ok;
 	}
+	
+	async send(body = '', status = STATUS.OK, headers = []) {
+		if (this.#aborted)
+			return;
+		
+		const res = this.#response;
+		if (++this.#sends > 3) {
+			res.writeStatus(this.#status = STATUS.LoopDetected)
+				.end(`${
+					STATUS.LoopDetected
+				} LOOP DETECTED (more than 3 attempts to send on the same request)`);
+			return HANDLED;
+		}
+		this.#status = status;
+
+		const req = this.#request;
+		const middleware = this.#middleware;
+		
+		for (let [condition, hook] in middleware) {
+			if (condition(this)) {
+				let output = await hook(body, req, this);
+				if (!is.undefined(output) && output !== YIELD) {
+					body = output;
+					break;
+				}
+			}
+		}
+
+		if (body !== HANDLED) {
+			this.#aborted = true; // No further sending will be allowed:
+			this.headers = headers; // Append new headers
+			res.cork(async () => {
+				res.writeStatus(status);
+				this.headers.forEach(([key, value]) => res.writeHeader(key, value));
+				res.end(body);
+			});
+		}
+
+		return HANDLED;
+	}
+
+	redirect(Location = '/', status = STATUS.Found) {
+		return ![
+			STATUS.Found,
+			STATUS.MovedPermanently,
+			STATUS.TemporaryRedirect,
+			STATUS.PermanentRedirect
+		].includes(status) ?
+			this.error(`REDIRECT ERROR: INVALID STATUS '${status}'`) :
+				this.send(
+					`${status} RESOURCE ${http.STATUS_CODES[status].toUpperCase()} => ${Location}`,
+					status,
+					{Location}
+				);
+	}
+
+	// Used for methods that create a new resource (but not POST... just 200 is fine)
+	created(Location, body = `${STATUS.Created} RESOURCE CREATED => ${Location}`) {
+		return this.send(body, STATUS.Created, {Location});
+	}
+
+	// Ouft!
+	not_found(body = `${STATUS.NotFound} RESOURCE NOT FOUND`) {
+		return this.send(body, STATUS.NotFound);
+	}
+
+	// Call this to tell the user an internal server error has occurred.
+	// NOTE: this is when the error is OUR fault.
+	error(body = `${STATUS.InternalServerError} INTERNAL SERVER ERROR`) {
+		return this.send(body, STATUS.InternalServerError);
+	}
+
+	unauthorized(realm = "Access to privileged data.", ...types) {
+		if (!types.length)
+			types.push('Basic');
+		const status = STATUS.Unauthorized;
+		return this.send(
+			`${status} ${http.STATUS_CODES[status].toUpperCase()} => "${realm}"`,
+			status,
+			types.map(
+				type =>
+					["WWW-Authenticate", `${type} realm="${realm}", charset="UTF-8"`]
+			)
+		);
+	}
 
 	stream(
-		mime_type,
-		readstream, // TODO: other kinds of streams?
-		size,
+		stream, // Anything that is a JavaScript stream... readstream, etc... they all have the same API, right?
+		size, // What about live streams? Can this be omitted?
 		success = DO_NOTHING,
 		onerror = DO_NOTHING,
 		onabort = DO_NOTHING
@@ -320,11 +377,8 @@ export class Response extends Type {
 		let buffer;
 		let l_offset;
 
-		res.writeStatus(OK)
-			.writeHeader("Content-Type", mime_type);
-
-		readstream.on('data', chunk => {
-			if (!this.send_buffer(buffer = BUFF(chunk), size, success, readstream)) {
+		stream.on('data', chunk => {
+			if (!this.send_buffer(buffer = BUFF(chunk), size, success, stream)) {
 				readstream.pause();
 				l_offset = res.getWriteOffset();
 			}
@@ -332,136 +386,307 @@ export class Response extends Type {
 			this.close(); // ?
 			onerror(e);
 		});
-		// CHANGE THIS
 		this.onabort(() => {
-			readstream.destroy();
+			stream.destroy();
 			onabort();
 		});
 		this.onwrite(offset => {
-			let ok = this.send_buffer(buffer.slice(offset - l_offset), size, success, readstream);
+			let ok = this.send_buffer(buffer.slice(offset - l_offset), size, success, stream);
 			if (ok)
-				readstream.resume();
+				stream.resume();
 			return ok;
 		});
+
+		return HANDLED;
 	}
 
-	file_stream(filename, success, error) {
+	file_head(filename) {
 		let size = stats(filename).size;
 		let type = mime.getType(filename);
+
+		this.#response.writeStatus(OK)
+			.writeHeader("Content-Type", type)
+			.writeHeader("Content-Length", size);
+		
+		return size;
+	}
+
+	file(filename, success, onerror, onabort) {
+		const size = this.file_head(filename);
 		let readstream = read_stream(filename);
-		exists(filename) ?
-			this.stream(type, readstream, size, success, error) :
+		return exists(filename) ?
+			this.stream(readstream, size, success, onerror, onabort) :
 				this.not_found();
+	}
+
+	// TODO: finish and test:
+	live_stream(mime_type, stream, oncomplete, onerror, onabort) {
+		this.#response.writeStatus(OK)
+			.writeHeader("Content-Type", mime_type);
+		// How do we end the stream? res.close/end/tryEnd()?
+		// TODO: look more into how streaming endpoints work.
+		return this.stream(stream, Number.POSITIVE_INFINITY, oncomplete, onerror, onabort);
+	}
+
+	timeout(body = `${STATUS.RequestTimeout} REQUEST TIMEOUT`) {
+		return this.send(body, STATUS.RequestTimeout);
+	}
+
+	teapot(body = `${STATUS.ImaTeapot} I'M A TEAPOT`) {
+		return this.send(body, STATUS.ImaTeapot);
+	}
+
+	ondata(callback) {
+		this.#response.onData(callback);
+		return this;
+	}
+
+	onwrite(callback) {
+		this.#response.onWritable(callback);
+		return this;
+	}
+
+	onabort(callback) {
+		this.#onabort = callback;
+		return this;
+	}
+
+	close() {
+		this.#response.close();
+		return HANDLED;
+	}
+
+	yield(yield = true) {
+		return this.#request.setYield(yield) && YIELD;
+	}
+}
+
+export class Socket extends Type {
+	#socket;
+	#middleware;
+
+	get ip() {
+		return String(this.#response.getRemoteAddressAsText());
+	}
+
+	constructor(socket, middleware) {
+		super();
+		this.#socket = socket;
+		this.#middleware = middleware;
+	}
+
+	cork(callback) {
+		this.#socket.cork(callback);
+	}
+
+	pipe(msg) {
+		const is_binary = msg instanceof Binary;
+		return [
+			is_binary ?
+				this.#middleware.write(msg) :
+					this.#middleware.stringify(msg),
+			is_binary
+		];
+	}
+
+	send(msg, compress = false) {
+		this.#socket.send(...this.pipe(msg), compress);
+		return this;
+	}
+
+	publish(topic, msg, compress = false) {
+		this.#socket.publish(topic, ...this.pipe(msg), compress);
+		return this;
+	}
+
+	subscribe(topic) {
+		this.#socket.subscribe(topic);
+		return this;
+	}
+
+	unsubscribe(topic) {
+		this.#socket.unsubscribe(topic);
+		return this;
+	}
+
+	end(code, msg) {
+		this.#socket.end(code, ...this.pipe(msg));
+	}
+
+	close() {
+		this.#socket.close();
 	}
 }
 
 export class Listener extends Type(Emitter, {
 	compression: SHARED_COMPRESSOR,
-	payload_size: 16 * 1024 * 1024,
-	bottleneck_size: 1024,
-	timeout: 10,
+	maxPayloadLength: 16 * 1024,
+	maxBackpressure: 1024,
+	idleTimeout: 10,
+
+	open: Function,
+	message: Function,
+	close: Function,
+	drain: Function
 }) {
-	constructor(hooks, handler = String) {
+	constructor(hooks, middleware) {
 		if (is.function(hooks))
 			hooks = {
 				message: hooks
 			};
-
-		super();
-		this.static(hooks.map(
-			([event, hook]) =>
-				[
-					event,
-					(socket, message, is_binary) => {
-						const message = is_binary ? message : handler(message);
-						if (message === undefined || message === null)
-							socket.end('Data sent is not valid.');
-						else
-							hook.call(
-								socket,
-								message,
-								socket
-							);
-					}
-				]
-		));
-	}
-}
-
-export class JSONListener extends Listener {
-	constructor(hooks) {
-		super(hooks, buffer => {
-			try {
-				return JSON.parse(buffer);
-			} catch(e) {
-				return undefined
-			}
+		super({
+			open: socket => {
+				console.log('SOCKET OPENED');
+				hooks.open && hooks.open(new Socket(socket, middleware));
+			},
+			message: (socket, message, is_binary) => {
+				console.log('SOCKET MESSAGE RECEIVED');
+				socket = new Socket(socket, middleware);
+				const rtrn = hooks.message(
+					is_binary ?
+						middleware.read(message) :
+							middleware.parse(message, socket),
+					socket
+				);
+				if (rtrn && rtrn !== HANDLED && rtrn !== YIELD)
+					socket.send(rtrn);
+			},
+			close: (socket, code, message) => {
+				console.log('SOCKET CLOSED');
+				hooks.close && hooks.close(
+					code,
+					message,
+					socket
+				);
+			},
+			drain: socket => {
+				console.log('SOCKET DRAIN, BABY...');
+				hooks.drain && hooks.drain(new Socket(socket, middleware));
+			},
 		});
 	}
 }
 
-export class Endpoint extends Emitter {
-	// TODO: Endpoint API?
+export class Endpoint extends Type({
+	get: Function,
+	head: Function,
+	post: Function,
+	put: Function,
+	options: Function,
+	any: Function,
+}) {
 	constructor(hooks) {
 		if (is.function(hooks))
 			hooks = {
 				get: hooks
 			};
-
-		super(); // dp anything?
-		// Anything else we actually need to do?
-		// What we might do is override defaults....
-		// that's actually not a terrible idea...
-		// what was it about options?
-		this.static({
-			...hooks,
-
-		});
-	}
-	// ANY REQUEST METHOD. 
-	any() {
-		// 
-	}
-	// RETRIEVE HEADERS FOR GET REQUEST
-	head() {
-		// For file size and other tings...
-	}
-	// RETRIEVE RESOURCE
-	get() {
-
-	}
-	// CREATE RESOURCE
-	post() {
-
-	}
-	// CREATE OR UPDATE RESOURCE
-	put() {
-
-	}
-
-	options() {
-		// 
+		
+		if (!hooks.any)
+			hooks.any = req => req.bad_method();
+		
+		super(hooks);
 	}
 }
 
 export class Router extends Emitter {
+	// TODO: middleware?
 	constructor(name, routes) {
 		if (!routes)
 			routes = name,
 			name = this.constructor.name;
-		this.static(routes.map(([pattern, endpoint]) => {
-			// If it's an unsuspecting object literal, make an Endpoint,
-			// If it's already an Endpoint, leave it as is.
-			// If it's a router... we have to do magics...
-		}))
+		
+		if (is.function(routes))
+			routes = {
+				"/": routes
+			};
+		this.static(
+			routes.map(
+				([
+					pattern,
+					endpoint
+				]) =>
+					[
+						pattern,
+						endpoint.constructor === Object ||
+							is.function(endpoint) ?
+								new Endpoint(endpoint) : endpoint
+					]
+			)
+		);
 	}
 }
 
 export class Surf extends Emitter {
 	#app;
 	#router;
-	#in = []; // Our in-bound middleware
-	#out = []; // our out-bound middleware
+	#middleware = [
+		req => {
+			console.log(`[${req.method} ${req.type}]`);
+			console.log(`"${req.uri}" => ${req.route}`);
+			console.log(req.headers.map(([key, value]) => `  "${key}" "${value}"`));
+			console.log('----------------------------------------');
+		}
+	];
+
+	#bodyware = {
+		parse: [
+			// JSON DATA REQUEST
+			[
+				req => req.type === 'application/json',
+				(body, req) => {
+					try {
+						return JSON.parse(body);
+					} catch(e) {
+						return req.bad_request(`${STATUS.BadRequest} MALFORMED JSON`);
+					}
+				}
+			],
+			// MULTIPART FORM DATA REQUEST
+			[
+				req => req.type.startsWith('multipart/form-data'),
+				(body, req) => this.#app.getParts(body, req.type)
+			],
+			// FORM DATA REQUEST
+			[
+				req => req.type === 'application/x-www-form-urlencoded',
+				body => QUERY(new String(body || ''))
+			],
+			// PLAIN TEXT (DEFAULT)
+			[
+				req => req.type === 'text/plain',
+				body => String(body),
+			],
+			// TODO: handle binary by default
+		],
+		stringify: [
+			// JSON DATA RESPONSE
+			[
+				req => req.type === 'application/json',
+				body => JSON.stringify(body) ?? ''
+			],
+			// PLAIN TEXT RESPONSE (DEFAULT)
+			[
+				req => req.type === 'text/plain',
+				body => String(body) // <-- We should get [object Object] for non-handled types.
+			]
+			// TODO: handle binary by default
+		]
+	}
+
+	#socketware = {
+		parse(msg, socket) {
+			return String(msg)
+		},
+		stringify(msg, socket) {
+			return String(msg);
+		},
+		read(binary, socket) {
+			return binary;
+		},
+		write(binary, socket) {
+			return binary;
+		}
+	}
 
 	constructor(router) {
 		super();
@@ -470,22 +695,65 @@ export class Surf extends Emitter {
 				router : new Router(router);
 	}
 
-	init(
-		passphrase = process.env.PASSPHRASE,
-		key_file_name = process.env.KEY_FILE,
-		cert_file_name = process.env.CERT_FILE
-	) {
-		this.#app = key_file_name && cert_file_name ?
-			Server.SSLApp({
-				key_file_name,
-				cert_file_name
-			}) : Server.App({passphrase});
+	middleware(...intercepts) {
+		this.#middleware.push(...intercepts);
 		return this;
 	}
 
-	middleware(...intercepts) {
-
+	bodyware(...intercepts) {
+		intercepts.forEach(({parse, stringify}) => {
+			parse && this.#bodyware.parse.unshift(parse);
+			stringify && this.#bodyware.stringify.unshift(stringify);
+		});
 		return this;
+	}
+
+	socketware(intercept) {
+		this.#socketware.assign(intercept);
+		return this;
+	}
+
+	parse(router, mount = '/') {
+		const app = this.#app;
+		router.forEach(([pattern, endpoint]) => {
+			const mountpoint = CONCAT(mount, pattern);
+			if (endpoint instanceof Router)
+				return this.parse(endpoint, mountpoint); // This is mostly OK!
+			endpoint.forEach(([method, hook]) => {
+				if (method === "listen")
+					app.ws(mountpoint, Listener(hook, this.#socketware));
+				else
+					app[mountpoint](
+						pattern,
+						async (res, req) => {
+							let response =
+								new Response(
+									res,
+									this.#bodyware.stringify
+								);
+							let request =
+								new Request(
+									pattern,
+									req,
+									response,
+									this.#bodyware.parse
+								);
+							
+							for (let middle in this.#middleware)
+								if (middle(request, response) === HANDLED)
+									return;
+							
+							const output = await hook(request, response);
+							if (output && output !== HANDLED) {
+								if (output === YIELD)
+									response.yield();
+								else
+									response.send(output);
+							}
+						}
+					)
+			})
+		});
 	}
 
 	listen(
@@ -493,19 +761,26 @@ export class Surf extends Emitter {
 		success = DO_NOTHING,
 		error = DO_NOTHING
 	) {
-		const app = this.#app;
-		this.init();
-		this.#router.forEach(([pattern, endpoint]) =>
-			endpoint.forEach(([method, hook]) =>
-				app[method](
-					pattern,
-					method == "ws" ? hook :
-						async (res, req) => {
-							// OK, this is good.
-						}
-				)
-			)
-		);
+		this.#app = (env => {
+			const key_file_name = env.KEY_FILE;
+			const cert_file_name = env.CERT_FILE;
+			const passphrase = env.PASSPHRASE;
+
+			return key_file_name && cert_file_name ?
+				Server.SSLApp({
+					key_file_name,
+					cert_file_name,
+					passphrase
+				}) : Server.App({passphrase});
+		})(process.env);
+
+		this.parse(this.#router);
+		app.listen(port, socket => {
+			if (socket)
+				success(socket);
+			else
+				error(socket);
+		});
 		return this;
 	}
 }

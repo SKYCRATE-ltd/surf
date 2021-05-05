@@ -4,15 +4,6 @@
   "description": "A fast-fast js wrapper for μWebSockets.js (c/c++ ØMQ webserver)",
   "main": "index.js",
   "type": "module",
-  "dependencies": {
-    "computer": "^1.0.0",
-    "crux": "^1.0.0",
-    "jst": "^1.0.0",
-    "mime": "^2.5.2",
-    "termite": "^1.0.0",
-    "uWebSockets.js": "^19.2.0",
-    "zed": "^1.0.0"
-  },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
