@@ -22,5 +22,11 @@
   "bugs": {
     "url": "https://github.com/SKYCRATE-ltd/surf/issues"
   },
-  "homepage": "https://github.com/SKYCRATE-ltd/surf#readme"
+  "homepage": "https://github.com/SKYCRATE-ltd/surf#readme",
+  "dependencies": {
+    "jst": "github:SKYCRATE-ltd/jst#backend",
+    "mime": "^2.5.2",
+    "uWebSockets.js": "github:uNetworking/uWebSockets.js#v19.2.0",
+    "zed": "github:SKYCRATE-ltd/zed"
+  }
 }

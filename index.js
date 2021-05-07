@@ -3,27 +3,49 @@ import {
 	statSync as stats,
 	createReadStream as read_stream,
 } from "fs";
-import Server, {
-	SHARED_COMPRESSOR
-} from "uWebSockets.js";
+import {STATUS_CODES} from "http";
+import Server from "uWebSockets.js";
 import mime from "mime";
 import {
 	is
 } from "crux";
 import {
-	Type, Emitter
+	Type, Emitter, Class, UInt
 } from "zed";
 
+// TODO: move clock to middleware....
+const CLOCK = [
+	'🕐',
+	'🕑',
+	'🕒',
+	'🕓',
+	'🕔',
+	'🕕',
+	'🕖',
+	'🕗',
+	'🕘',
+	'🕙',
+	'🕚',
+	'🕛',
+];
 const COLON = ':';
 const EQUAL = '=';
 const PIPE = '|';
 const SLASH = '/';
 const AND = '&';
+const NEWLINE = '\n';
+const SHARED_COMPRESSOR = Server.SHARED_COMPRESSOR;
 const TYPED_ARRAY = Uint8Array.constructor.__proto__; // <-- TypedArray is tricky to get.
 const DO_NOTHING = x => x;
 const CONCAT = (a, b) => {
-	// can't handle directories with dots in them... TODO: fix this...
-	return `${a}/${b}`.replace(/\/\.\//g, '/').replace(/\/[\w-]+\/\.\.\//g, '/');
+	if (a === SLASH)
+		a = '';
+	if (b === SLASH)
+		b = '';
+	return `${a}/${b}`
+		.replace(/\/\//g, SLASH)
+		.replace(/\/\.\//g, SLASH)
+		.replace(/\/[\w-]+\/\.\.\//g, SLASH);
 }
 const BUFF = buffer =>
 				buffer.buffer.slice(
@@ -45,7 +67,7 @@ const QUERY = query =>
 
 class Binary extends Type {
 	static defines(instance) {
-		return instance instanceof ArrayBuffer ||
+		return instance.constructor === ArrayBuffer ||
 				// instance instanceof DataView || // <-- Would this be consistent?
 					instance.constructor.__proto__ === TYPED_ARRAY;
 	}
@@ -53,7 +75,7 @@ class Binary extends Type {
 
 export const YIELD = Symbol('request yield');
 export const HANDLED = Symbol('request handled')
-export const STATUS = http.STATUS_CODES.map(
+export const STATUS = STATUS_CODES.map(
 				([code, desc]) => [
 					desc
 						.replace(/\s+/g, '')
@@ -80,10 +102,11 @@ export const CODES = Object.fromEntries(new Map([
 ].map((x, i) => [x, i + 1000])));
 
 export class Request extends Type({
-	method: String,
-	uri: String,
 	route: String,
+	uri: String,
+	method: String,
 }) {
+	#headers;
 	#request; // <-- uWS
 	#response; // <-- Surf
 	#middleware = [];
@@ -93,17 +116,24 @@ export class Request extends Type({
 	}
 
 	get headers() {
-		const headers = [];
-		this.#request.forEach((key, value) => headers.push([key, value]));
-		return headers;
+		if (!this.#headers) {
+			this.#headers = [];
+			this.#request.forEach((key, value) => this.#headers.push([key, value]));
+		}
+		return this.#headers;
 	}
 
 	get params() {
-		const req = this.#request;
 		return this.route.split(SLASH)
 				.filter(dir => dir.startsWith(COLON))
-				.map(param => param.substr(1))
-				.map((param, index) => [param, req.getParameter(index)]);
+				.map(param => param.substr(1));
+	}
+
+	get args() {
+		const req = this.#request;
+		return Object.fromEntries(new Map(
+			this.params.map((param, index) => [param, req.getParameter(index)])
+		));
 	}
 
 	get query() {
@@ -118,6 +148,10 @@ export class Request extends Type({
 		return this.uri.split(SLASH).pop();
 	}
 
+	get accepted() {
+		return this.header('accept')?.split(',').map(mime => mime.split(';')[0]);
+	}
+
 	get type() {
 		return this.header('content-type') || 'text/plain'; // <-- or text/html?
 	}
@@ -126,7 +160,7 @@ export class Request extends Type({
 		super({
 			route: route,
 			uri: req.getUrl(),
-			method: req.getMethod().toUpperCase(),
+			method: req.getMethod().toUpperCase()
 		});
 		res.init(this);
 		
@@ -136,7 +170,7 @@ export class Request extends Type({
 	}
 
 	header(key) {
-		return this.#request.getHeader(key);
+		return this.headers.find(([k]) => k === key)?.[1];
 	}
 
 	body(ondone, onerror = DO_NOTHING) {
@@ -151,7 +185,8 @@ export class Request extends Type({
 			buffer = Buffer.concat(buffer ? [buffer, chunk] : [chunk]);
 			if (isdone) {
 				const middleware = this.#middleware;
-				for (let [condition, hook] in middleware) {
+				for (let index = 0, l = middleware.length; index < l; index++) {
+					const [condition, hook] = middleware[index];
 					if (condition(this)) {
 						let output = hook(buffer, this, res);
 						if (!is.undefined(output) && output !== YIELD) {
@@ -166,7 +201,7 @@ export class Request extends Type({
 						`${
 							this.#request.status
 						} ${
-							http.STATUS_CODES[this.#request.status]
+							STATUS_CODES[this.#request.status]
 						}`) :
 						ondone(buffer);
 			}
@@ -186,12 +221,14 @@ export class Request extends Type({
 		return this.#response.send(body, STATUS.MethodNotAllowed);
 	}
 
-	yield(yield = true) {
-		return this.#request.setYield(yield) && YIELD;
+	yield(y = true) {
+		return this.#request.setYield(y) && YIELD;
 	}
 }
 
-export class Response extends Type {
+export class Response extends Type({
+	type: 'text/plain'
+}) {
 	#request; // <-- Surf
 	#response; // <-- uWS
 	#middleware = [];
@@ -199,7 +236,9 @@ export class Response extends Type {
 	#id = [];
 	#title = [];
 	#status = '200';
-	#headers = [];
+	#headers = [
+		["Surfs-Up", "v0.1 - Awesome"]
+	];
 	#timestamp = 0;
 
 	#aborted = false;
@@ -211,8 +250,9 @@ export class Response extends Type {
 	}
 
 	get ip() {
-		// TODO: Improve this!
-		return String(this.#response.getRemoteAddressAsText());
+		return new TextDecoder("utf-8").decode(
+			this.#response.getRemoteAddressAsText()
+		).replace(/0000/g, '');
 	}
 
 	get id() {
@@ -220,7 +260,7 @@ export class Response extends Type {
 	}
 
 	set id(id) {
-		return this.#id.push(id) && this.#id;
+		return this.#id.push(...id.split(SLASH)) && this.#id;
 	}
 
 	get title() {
@@ -268,6 +308,8 @@ export class Response extends Type {
 	}
 
 	header(key, value) {
+		if (!value)
+			return this.#headers.filter(([k]) => k === key).map(([k, v]) => v).join(PIPE);
 		this.#headers.push([key, value]);
 		return this;
 	}
@@ -283,7 +325,7 @@ export class Response extends Type {
 	
 	async send(body = '', status = STATUS.OK, headers = []) {
 		if (this.#aborted)
-			return;
+			return YIELD;
 		
 		const res = this.#response;
 		if (++this.#sends > 3) {
@@ -294,12 +336,13 @@ export class Response extends Type {
 			return HANDLED;
 		}
 		this.#status = status;
-
+		
 		const req = this.#request;
 		const middleware = this.#middleware;
 		
-		for (let [condition, hook] in middleware) {
-			if (condition(this)) {
+		for (let index = 0, l = middleware.length; index < l; index++) {
+			const [condition, hook] = middleware[index];
+			if (condition(req, this)) {
 				let output = await hook(body, req, this);
 				if (!is.undefined(output) && output !== YIELD) {
 					body = output;
@@ -311,7 +354,38 @@ export class Response extends Type {
 		if (body !== HANDLED) {
 			this.#aborted = true; // No further sending will be allowed:
 			this.headers = headers; // Append new headers
-			res.cork(async () => {
+			this.title && this.header('Content-Title', this.title);
+			this.header('Content-Type', this.type);
+
+			// TODO: console outputs should be a hook/callback
+			console.log(` 📤 OUTBOUND RESPONSE [${this.type}]`);
+			console.log('----------------------------------------');
+			console.log(`  DESTINATION: ${this.ip}`);
+			console.log(`  URI: ${req.host}${req.uri}`);
+			console.log(`  ROUTE: ${req.route}`);
+			console.log();
+
+			if (this.headers.length) {
+				console.log(this.headers.map(([key, value]) =>
+					`  ${key.toUpperCase()} = ${value.length > 34 ? value.substr(0, 34) + '...' : value}`).join(NEWLINE));
+				console.log();
+			}
+			const accepted = req.accepted;
+			if (accepted && !accepted.includes('*/*') && !accepted.includes(this.type))
+				console.warn(`    * 😕 WARNING: "${this.type}" is not specified in recipient's accept list.\n`);
+
+			const status = this.status;
+			console.log(`   ${
+				status >= 500 ? '🔴' :
+					status >= 400 ? '⭕' :
+						status >= 300 ? '🔶' :
+							status >= 200 ? '🔵' : '🆗'
+				} STATUS: ${status} ${STATUS_CODES[status]}\n`);
+			console.log(` ✅ RESPONSE SENT in ${this.time}ms`);
+			console.log('----------------------------------------');
+			// TODO
+
+			res.cork(() => {
 				res.writeStatus(status);
 				this.headers.forEach(([key, value]) => res.writeHeader(key, value));
 				res.end(body);
@@ -330,7 +404,7 @@ export class Response extends Type {
 		].includes(status) ?
 			this.error(`REDIRECT ERROR: INVALID STATUS '${status}'`) :
 				this.send(
-					`${status} RESOURCE ${http.STATUS_CODES[status].toUpperCase()} => ${Location}`,
+					`${status} RESOURCE ${STATUS_CODES[status].toUpperCase()} => ${Location}`,
 					status,
 					{Location}
 				);
@@ -357,7 +431,7 @@ export class Response extends Type {
 			types.push('Basic');
 		const status = STATUS.Unauthorized;
 		return this.send(
-			`${status} ${http.STATUS_CODES[status].toUpperCase()} => "${realm}"`,
+			`${status} ${STATUS_CODES[status].toUpperCase()} => "${realm}"`,
 			status,
 			types.map(
 				type =>
@@ -456,8 +530,8 @@ export class Response extends Type {
 		return HANDLED;
 	}
 
-	yield(yield = true) {
-		return this.#request.setYield(yield) && YIELD;
+	yield(y = true) {
+		return this.#request.setYield(y) && YIELD;
 	}
 }
 
@@ -466,7 +540,7 @@ export class Socket extends Type {
 	#middleware;
 
 	get ip() {
-		return String(this.#response.getRemoteAddressAsText());
+		return String(this.#socket.getRemoteAddressAsText());
 	}
 
 	constructor(socket, middleware) {
@@ -518,11 +592,15 @@ export class Socket extends Type {
 	}
 }
 
-export class Listener extends Type(Emitter, {
-	compression: SHARED_COMPRESSOR,
-	maxPayloadLength: 16 * 1024,
-	maxBackpressure: 1024,
-	idleTimeout: 10,
+export class Listener extends Type({
+	compression: UInt,
+	maxPayloadLength: UInt,
+	maxBackpressure: UInt,
+	idleTimeout: class MultipleOf4 extends UInt {
+		static defines(instance) {
+			return instance instanceof Number && instance % 4 === 0;
+		}
+	},
 
 	open: Function,
 	message: Function,
@@ -535,12 +613,17 @@ export class Listener extends Type(Emitter, {
 				message: hooks
 			};
 		super({
+			compression: SHARED_COMPRESSOR,
+			maxPayloadLength: 16 * 1024,
+			maxBackpressure: 1024,
+			idleTimeout: 4 * 3,
+
 			open: socket => {
-				console.log('SOCKET OPENED');
+				console.debug('SOCKET OPENED');
 				hooks.open && hooks.open(new Socket(socket, middleware));
 			},
 			message: (socket, message, is_binary) => {
-				console.log('SOCKET MESSAGE RECEIVED');
+				console.debug('SOCKET MESSAGE RECEIVED');
 				socket = new Socket(socket, middleware);
 				const rtrn = hooks.message(
 					is_binary ?
@@ -552,7 +635,7 @@ export class Listener extends Type(Emitter, {
 					socket.send(rtrn);
 			},
 			close: (socket, code, message) => {
-				console.log('SOCKET CLOSED');
+				console.debug('SOCKET CLOSED');
 				hooks.close && hooks.close(
 					code,
 					message,
@@ -560,7 +643,7 @@ export class Listener extends Type(Emitter, {
 				);
 			},
 			drain: socket => {
-				console.log('SOCKET DRAIN, BABY...');
+				console.debug('SOCKET DRAIN, BABY...');
 				hooks.drain && hooks.drain(new Socket(socket, middleware));
 			},
 		});
@@ -588,17 +671,24 @@ export class Endpoint extends Type({
 	}
 }
 
-export class Router extends Emitter {
-	// TODO: middleware?
+export class Router extends Type(Emitter, {
+	_name: String
+}) {
 	constructor(name, routes) {
+		super();
+
 		if (!routes)
 			routes = name,
-			name = this.constructor.name;
+			this._name = this.constructor.name;
 		
 		if (is.function(routes))
 			routes = {
 				"/": routes
 			};
+		
+		const hook = routes["/*"];
+		routes["/*"] = (req, res) => hook ?
+							hook(req, res) : res.not_found();
 		this.static(
 			routes.map(
 				([
@@ -619,15 +709,10 @@ export class Router extends Emitter {
 export class Surf extends Emitter {
 	#app;
 	#router;
-	#middleware = [
-		req => {
-			console.log(`[${req.method} ${req.type}]`);
-			console.log(`"${req.uri}" => ${req.route}`);
-			console.log(req.headers.map(([key, value]) => `  "${key}" "${value}"`));
-			console.log('----------------------------------------');
-		}
-	];
+	#handling = false;
+	#requests = 0;
 
+	#middleware = [];
 	#bodyware = {
 		parse: [
 			// JSON DATA REQUEST
@@ -661,12 +746,15 @@ export class Surf extends Emitter {
 		stringify: [
 			// JSON DATA RESPONSE
 			[
-				req => req.type === 'application/json',
-				body => JSON.stringify(body) ?? ''
+				req => req.accepted.includes('application/json'), // this should be response.type?
+				(body, req, res) => {
+					res.type = 'application/json';
+					return JSON.stringify(body) ?? '';
+				}
 			],
 			// PLAIN TEXT RESPONSE (DEFAULT)
 			[
-				req => req.type === 'text/plain',
+				() => true, // Tern'er into plain-text, son!
 				body => String(body) // <-- We should get [object Object] for non-handled types.
 			]
 			// TODO: handle binary by default
@@ -690,7 +778,7 @@ export class Surf extends Emitter {
 
 	constructor(router) {
 		super();
-		this.router =
+		this.#router =
 			router instanceof Router ?
 				router : new Router(router);
 	}
@@ -702,8 +790,8 @@ export class Surf extends Emitter {
 
 	bodyware(...intercepts) {
 		intercepts.forEach(({parse, stringify}) => {
-			parse && this.#bodyware.parse.unshift(parse);
-			stringify && this.#bodyware.stringify.unshift(stringify);
+			parse && (this.#bodyware.parse = parse.concat(this.#bodyware.parse));
+			stringify && (this.#bodyware.stringify = stringify.concat(this.#bodyware.stringify));
 		});
 		return this;
 	}
@@ -715,17 +803,37 @@ export class Surf extends Emitter {
 
 	parse(router, mount = '/') {
 		const app = this.#app;
+		
+		console.log(` 🔀 ${router._name}  🡆  ${mount}`);
+		console.log('----------------------------------------\n');
+
 		router.forEach(([pattern, endpoint]) => {
 			const mountpoint = CONCAT(mount, pattern);
+
+			console.log(`  ${mountpoint}  🡆  ${pattern}`);
+
 			if (endpoint instanceof Router)
-				return this.parse(endpoint, mountpoint); // This is mostly OK!
+				return this.parse(endpoint, mountpoint);
+			
 			endpoint.forEach(([method, hook]) => {
-				if (method === "listen")
-					app.ws(mountpoint, Listener(hook, this.#socketware));
-				else
-					app[mountpoint](
-						pattern,
+				if (is.undefined(hook))
+					return;
+				
+				console.log('    •', method.toUpperCase());
+
+				if (method === "listen") {
+					const listener = new Listener(hook, this.#socketware);
+					listener.forEach(([channel, hook]) => {
+						console.log('      -', channel, is.function(hook) ? '👀' : hook);
+					});
+					app.ws(mountpoint, listener);
+				} else {
+					app[method](
+						mountpoint,
 						async (res, req) => {
+							this.#handling = true;
+							this.#requests++;
+
 							let response =
 								new Response(
 									res,
@@ -739,28 +847,56 @@ export class Surf extends Emitter {
 									this.#bodyware.parse
 								);
 							
-							for (let middle in this.#middleware)
-								if (middle(request, response) === HANDLED)
+							console.log(`\r 📥 INCOMING REQUEST [${request.method} ${request.type}]`);
+							console.log('----------------------------------------');
+							console.log(`  ORIGIN: ${request.ip}`);
+							console.log(`  URI: ${request.host}${request.uri}`);
+							console.log(`  ROUTE: ${request.route}`);
+							console.log();
+							console.log(request.headers.map(([key, value]) =>
+								`  ${key.toUpperCase()} = ${value.length > 34 ? value.substr(0, 34) + '...' : value}`).join(NEWLINE));
+							console.log('----------------------------------------');
+
+							const middleware = this.#middleware;
+							for (let index = 0, l = middleware.length; index < l; index++) {
+								if (middleware[index](request, response) === HANDLED)
 									return;
-							
+							}
+
 							const output = await hook(request, response);
 							if (output && output !== HANDLED) {
-								if (output === YIELD)
-									response.yield();
+								if (output === YIELD) {
+									console.log(`- 🚩 YIELD ${request.route}`);
+									console.log('----------------------------------------');
+								}
 								else
-									response.send(output);
+									await response.send(output);
 							}
+
+							this.#handling = false;
 						}
 					)
-			})
+				}
+			});
+
+			console.log();
 		});
+		console.log('----------------------------------------');
 	}
 
-	listen(
-		port = process.env.PORT || 9000,
-		success = DO_NOTHING,
-		error = DO_NOTHING
-	) {
+	listen(...args) {
+		if (!(args[0] instanceof UInt))
+			args.unshift(9001);
+		const [
+			port = process.env.PORT || 9000,
+			success = DO_NOTHING,
+			error = DO_NOTHING
+		] = args;
+
+		console.log('----------------------------------------');
+		console.log(` 🏄 STARTING SURF SERVER`);
+		console.log(` 📆 ${new Date().toLocaleString().replace(',', ' ⌚')}`);
+		console.log('----------------------------------------');
 		this.#app = (env => {
 			const key_file_name = env.KEY_FILE;
 			const cert_file_name = env.CERT_FILE;
@@ -775,11 +911,26 @@ export class Surf extends Emitter {
 		})(process.env);
 
 		this.parse(this.#router);
-		app.listen(port, socket => {
-			if (socket)
-				success(socket);
-			else
-				error(socket);
+
+		this.#app.listen(port, socket => {
+			if (socket) {
+				const timestamp = Date.now();
+
+				console.log(` ✅ SERVER STARTED ⚓ ${port}`);
+				success(port, socket);
+
+				setInterval(() => {
+					if (!this.#handling) {
+						const uptime = Math.floor((Date.now() - timestamp) / 1000);
+						process.stdout.write(`\r ${CLOCK[uptime % 12]} UPTIME: ${uptime}s  💁 REQUESTS: ${this.#requests} `);
+					}
+				}, 500);
+			}
+			else {
+				console.log(` 🇽 ERROR BINDING TO SOCKET ⚓ ${port}`)
+				error(port, socket);
+			}
+			console.log('----------------------------------------');
 		});
 		return this;
 	}
