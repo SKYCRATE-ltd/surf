@@ -549,7 +549,7 @@ export class Socket extends Type {
 		console.log(`  ROUTE: ${this.#mountpoint}`);
 		console.log(`  BINARY: ${is_binary}`);
 		console.log();
-		console.log(msg);
+		console.log({...msg});
 
 		msg = is_binary ?
 			this.#middleware.write(msg, this) :
@@ -681,7 +681,7 @@ export class Listener extends Type({
 						middleware.read(message, socket) :
 							middleware.parse(DECODE(message), socket);
 					
-					console.log(message);
+					console.log({...message});
 					console.log('----------------------------------------');
 
 					const rtrn = hooks.message(
