@@ -1,1 +1,10 @@
 <h1>Hello, World!</h1>
+
+${ item.map(item => `<a href="./${item.id}">${encode(item.name)}</a>`).join('<br />') }
+
+<h2>Create Chat Room</h2>
+
+<form action="./" method="POST">
+	<input name="name" type="text" placeholder="Name" />
+	<button type="submit">create</button>
+</form>

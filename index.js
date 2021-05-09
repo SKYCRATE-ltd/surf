@@ -3,38 +3,33 @@ import {
 	statSync as stats,
 	createReadStream as read_stream,
 } from "fs";
-import {STATUS_CODES} from "http";
 import Server from "uWebSockets.js";
 import mime from "mime";
 import {
 	is
 } from "crux";
 import {
-	Type, Emitter, Class, UInt
+	Type, Emitter, UInt
 } from "zed";
 
-// TODO: move clock to middleware....
-const CLOCK = [
-	'🕐',
-	'🕑',
-	'🕒',
-	'🕓',
-	'🕔',
-	'🕕',
-	'🕖',
-	'🕗',
-	'🕘',
-	'🕙',
-	'🕚',
-	'🕛',
-];
-const COLON = ':';
-const EQUAL = '=';
-const PIPE = '|';
-const SLASH = '/';
-const AND = '&';
-const NEWLINE = '\n';
-const SHARED_COMPRESSOR = Server.SHARED_COMPRESSOR;
+import {
+	CLOCK,
+	COLON,
+	EQUAL,
+	PIPE,
+	SLASH,
+	AND,
+	NEWLINE,
+
+	STATUS,
+	YIELD,
+	HANDLED
+} from "./constants.js";
+import {STATUS_CODES} from "http";
+import BODYWARE_JSON from "./bodyware/json.js";
+import SOCKETWARE from "./socketware/default.js";
+
+const DISABLED = Server.DISABLED;
 const TYPED_ARRAY = Uint8Array.constructor.__proto__; // <-- TypedArray is tricky to get.
 const DO_NOTHING = x => x;
 const CONCAT = (a, b) => {
@@ -47,6 +42,7 @@ const CONCAT = (a, b) => {
 		.replace(/\/\.\//g, SLASH)
 		.replace(/\/[\w-]+\/\.\.\//g, SLASH);
 }
+const DECODE = message => new TextDecoder("utf-8").decode(message);
 const BUFF = buffer =>
 				buffer.buffer.slice(
 					buffer.byteOffset,
@@ -60,46 +56,22 @@ const QUERY = query =>
 			.filter(DO_NOTHING) // Surprisingly, this does smthg; it removes empty strings!
 			.map(pair =>
 				pair.split(EQUAL)
-					.map(x => x.trim())
+					.map(x => decodeURIComponent(x.trim().replace(/\+/g, '%20')))
 					.filter(DO_NOTHING)
 			)
 	)) : {};
 
+let SOCKETS_IN_USE = 0;
+
 class Binary extends Type {
+	static validate() {
+		return false;
+	}
 	static defines(instance) {
 		return instance.constructor === ArrayBuffer ||
-				// instance instanceof DataView || // <-- Would this be consistent?
 					instance.constructor.__proto__ === TYPED_ARRAY;
 	}
 }
-
-export const YIELD = Symbol('request yield');
-export const HANDLED = Symbol('request handled')
-export const STATUS = STATUS_CODES.map(
-				([code, desc]) => [
-					desc
-						.replace(/\s+/g, '')
-						.replace(/('|-)/g, ''),
-					code
-				]);
-export const CODES = Object.fromEntries(new Map([
-	'Normal',
-	'GoingAway',
-	'ProtocolError',
-	'UnsupportedData',
-	'None',
-	'NoStatusReceived',
-	'AbnormalClosure',
-	'InvalidFrame',
-	'PolicyViolation',
-	'MessageTooBig',
-	'MissingExtension',
-	'InternalError',
-	'ServiceRestart',
-	'TryAgainLater',
-	'BadGateway',
-	'TLSHandshake'
-].map((x, i) => [x, i + 1000])));
 
 export class Request extends Type({
 	route: String,
@@ -233,7 +205,6 @@ export class Response extends Type({
 	#response; // <-- uWS
 	#middleware = [];
 	
-	#id = [];
 	#title = [];
 	#status = '200';
 	#headers = [
@@ -256,15 +227,14 @@ export class Response extends Type({
 	}
 
 	get id() {
-		return this.#id.join(SLASH);
-	}
-
-	set id(id) {
-		return this.#id.push(...id.split(SLASH)) && this.#id;
+		const routes = this.#request.route.split(SLASH);
+		const last = routes.pop();
+		routes.push(last.startsWith(COLON) ? 'item' : 'index');
+		return routes.filter(x => x && !x.startsWith(COLON)).join(SLASH);
 	}
 
 	get title() {
-		return this.#title.join(PIPE);
+		return this.#title.join(` ${PIPE} `) || this.id;
 	}
 
 	set title(title) {
@@ -276,14 +246,13 @@ export class Response extends Type({
 	}
 
 	set headers(more_headers) {
-		return this.#headers.concat(
+		return this.#headers = this.#headers.concat(
 			more_headers instanceof Array ?
 				more_headers : Object.entries(more_headers));
 	}
 
-	// Get the time since this request was created (in ms)
 	get time() {
-		return Date.now() - this.#timestamp;
+		return Date.now() - this.#timestamp; // ms
 	}
 
 	get aborted() {
@@ -395,7 +364,7 @@ export class Response extends Type({
 		return HANDLED;
 	}
 
-	redirect(Location = '/', status = STATUS.Found) {
+	redirect(uri = '/', status = STATUS.Found) {
 		return ![
 			STATUS.Found,
 			STATUS.MovedPermanently,
@@ -404,24 +373,22 @@ export class Response extends Type({
 		].includes(status) ?
 			this.error(`REDIRECT ERROR: INVALID STATUS '${status}'`) :
 				this.send(
-					`${status} RESOURCE ${STATUS_CODES[status].toUpperCase()} => ${Location}`,
+					null, //`${status} RESOURCE ${STATUS_CODES[status].toUpperCase()} => ${Location}`,
 					status,
-					{Location}
+					[
+						['Location', uri]
+					]
 				);
 	}
 
-	// Used for methods that create a new resource (but not POST... just 200 is fine)
-	created(Location, body = `${STATUS.Created} RESOURCE CREATED => ${Location}`) {
-		return this.send(body, STATUS.Created, {Location});
+	created(uri, body = `${STATUS.Created} RESOURCE CREATED => ${Location}`) {
+		return this.send(body, STATUS.Created, [['Location', uri]]);
 	}
 
-	// Ouft!
 	not_found(body = `${STATUS.NotFound} RESOURCE NOT FOUND`) {
 		return this.send(body, STATUS.NotFound);
 	}
 
-	// Call this to tell the user an internal server error has occurred.
-	// NOTE: this is when the error is OUR fault.
 	error(body = `${STATUS.InternalServerError} INTERNAL SERVER ERROR`) {
 		return this.send(body, STATUS.InternalServerError);
 	}
@@ -441,8 +408,8 @@ export class Response extends Type({
 	}
 
 	stream(
-		stream, // Anything that is a JavaScript stream... readstream, etc... they all have the same API, right?
-		size, // What about live streams? Can this be omitted?
+		stream, // Any JavaScript stream: they all have the same API, right?
+		size, // What about live streams? Number.POSITIVE_INFINITY
 		success = DO_NOTHING,
 		onerror = DO_NOTHING,
 		onabort = DO_NOTHING
@@ -457,7 +424,7 @@ export class Response extends Type({
 				l_offset = res.getWriteOffset();
 			}
 		}).on('error', e => {
-			this.close(); // ?
+			this.close();
 			onerror(e);
 		});
 		this.onabort(() => {
@@ -493,12 +460,9 @@ export class Response extends Type({
 				this.not_found();
 	}
 
-	// TODO: finish and test:
 	live_stream(mime_type, stream, oncomplete, onerror, onabort) {
 		this.#response.writeStatus(OK)
 			.writeHeader("Content-Type", mime_type);
-		// How do we end the stream? res.close/end/tryEnd()?
-		// TODO: look more into how streaming endpoints work.
 		return this.stream(stream, Number.POSITIVE_INFINITY, oncomplete, onerror, onabort);
 	}
 
@@ -536,41 +500,75 @@ export class Response extends Type({
 }
 
 export class Socket extends Type {
+	#ip;
+	#id;
+	#timestamp;
 	#socket;
+	#mountpoint;
 	#middleware;
 
 	get ip() {
-		return String(this.#socket.getRemoteAddressAsText());
+		return this.#ip ?? (this.#ip = DECODE(
+			this.#socket.getRemoteAddressAsText()
+		).replace(/0000/g, ''));
 	}
 
-	constructor(socket, middleware) {
+	get id() {
+		return this.#id || this.ip;
+	}
+
+	set id(id) {
+		return this.#id = id;
+	}
+
+	get time() {
+		return Date.now() - this.#timestamp; // ms
+	}
+
+	get backpressure() {
+		return this.#socket.getBufferedAmount();
+	}
+
+	constructor(mountpoint, socket, middleware) {
 		super();
+		this.#mountpoint = mountpoint;
 		this.#socket = socket;
 		this.#middleware = middleware;
+		this.reset();
 	}
 
 	cork(callback) {
 		this.#socket.cork(callback);
+		return HANDLED;
 	}
 
 	pipe(msg) {
 		const is_binary = msg instanceof Binary;
+		console.log(`\r 📨 SOCKET OUTBOUND MESSAGE`);
+		console.log('----------------------------------------');
+		console.log(`  ROUTE: ${this.#mountpoint}`);
+		console.log(`  BINARY: ${is_binary}`);
+		console.log();
+		console.log(msg);
+
+		msg = is_binary ?
+			this.#middleware.write(msg, this) :
+				this.#middleware.stringify(msg, this);
+		console.log('----------------------------------------');
 		return [
-			is_binary ?
-				this.#middleware.write(msg) :
-					this.#middleware.stringify(msg),
+			msg,
 			is_binary
 		];
 	}
 
 	send(msg, compress = false) {
 		this.#socket.send(...this.pipe(msg), compress);
-		return this;
+		return HANDLED;
 	}
 
 	publish(topic, msg, compress = false) {
 		this.#socket.publish(topic, ...this.pipe(msg), compress);
-		return this;
+		return HANDLED;
 	}
 
 	subscribe(topic) {
@@ -584,11 +582,48 @@ export class Socket extends Type {
 	}
 
 	end(code, msg) {
-		this.#socket.end(code, ...this.pipe(msg));
+		this.#socket.end(code, String(msg));
+		return HANDLED;
 	}
 
 	close() {
 		this.#socket.close();
+		return HANDLED;
+	}
+
+	wraps(socket) {
+		return this.#socket === socket;
+	}
+
+	reset() {
+		this.#timestamp = Date.now();
+		return this;
+	}
+}
+
+export class Peers extends Array {
+	constructor(...args) {
+		super(...args);
+	}
+
+	send(msg, compress = false) {
+		this.forEach(socket => socket.send(msg, compress));
+		return HANDLED;
+	}
+
+	get(socket) {
+		return this.find(s => s.wraps(socket))?.reset();
+	}
+
+	add(socket, mountpoint, middleware) {
+		const s = new Socket(mountpoint, socket, middleware);
+		s.id = this.push(s);
+		return s;
+	}
+
+	remove(socket) {
+		const i = this.findIndex(s => s.wraps(socket));
+		return this.splice(i, 1)[0]?.reset();
 	}
 }
 
@@ -607,44 +642,89 @@ export class Listener extends Type({
 	close: Function,
 	drain: Function
 }) {
-	constructor(hooks, middleware) {
+	#peers = new Peers();
+
+	constructor(mountpoint, hooks, middleware) {
 		if (is.function(hooks))
 			hooks = {
 				message: hooks
 			};
 		super({
-			compression: SHARED_COMPRESSOR,
+			compression: DISABLED,
 			maxPayloadLength: 16 * 1024,
 			maxBackpressure: 1024,
-			idleTimeout: 4 * 3,
+			idleTimeout: 0,
 
 			open: socket => {
-				console.debug('SOCKET OPENED');
-				hooks.open && hooks.open(new Socket(socket, middleware));
+				socket = this.#peers.add(socket, mountpoint, middleware);
+				console.log(`\r 📭 SOCKET #${socket.id} OPEN                         `);
+				console.log('----------------------------------------');
+				console.log(`  IP: ${socket.ip}`);
+				console.log(`  ROUTE: ${mountpoint}`);
+				console.log(`  PEERS: ${this.#peers.length}`);
+				console.log('----------------------------------------');
+				SOCKETS_IN_USE++;
+				hooks.open && hooks.open(socket, this.#peers);
+				console.log(`  TIME: ${socket.time}ms`);
+				console.log('----------------------------------------');
 			},
 			message: (socket, message, is_binary) => {
-				console.debug('SOCKET MESSAGE RECEIVED');
-				socket = new Socket(socket, middleware);
-				const rtrn = hooks.message(
-					is_binary ?
-						middleware.read(message) :
-							middleware.parse(message, socket),
-					socket
-				);
-				if (rtrn && rtrn !== HANDLED && rtrn !== YIELD)
-					socket.send(rtrn);
+				socket = this.#peers.get(socket);
+				console.log(`\r 📬 SOCKET #${socket.id} RECEIVED MESSAGE             `);
+				console.log('----------------------------------------');
+				console.log(`  IP: ${socket.ip}`);
+				console.log(`  ROUTE: ${mountpoint}`);
+				console.log(`  BINARY: ${is_binary}`);
+
+				if (message !== HANDLED && message !== YIELD) {
+					message = is_binary ?
+						middleware.read(message, socket) :
+							middleware.parse(DECODE(message), socket);
+					
+					console.log(message);
+					console.log('----------------------------------------');
+
+					const rtrn = hooks.message(
+						message,
+						socket,
+						this.#peers
+					);
+					if (rtrn && rtrn !== HANDLED && rtrn !== YIELD)
+						socket.send(rtrn);
+				}
+
+				console.log(`  TIME: ${socket.time}ms`);
+				console.log('----------------------------------------');
 			},
-			close: (socket, code, message) => {
-				console.debug('SOCKET CLOSED');
-				hooks.close && hooks.close(
-					code,
-					message,
-					socket
-				);
+			close: (socket, code, reason) => {
+				socket = this.#peers.remove(socket);
+				reason = DECODE(reason);
+				console.log(`\r 📪 SOCKET #${socket.id} CLOSED                      `);
+				console.log('----------------------------------------');
+				console.log(`  IP: ${socket.ip}`);
+				console.log(`  ROUTE: ${mountpoint}`);
+				console.log(`  REASON: ${code} ${reason}`);
+				console.log(`  PEERS: ${this.#peers.length}`);
+				console.log('----------------------------------------');
+				SOCKETS_IN_USE--;
+				hooks.close && hooks.close(code, reason, socket, this.#peers);
+
+				console.log(`  TIME: ${socket.time}ms`);
+				console.log('----------------------------------------');
 			},
 			drain: socket => {
-				console.debug('SOCKET DRAIN, BABY...');
-				hooks.drain && hooks.drain(new Socket(socket, middleware));
+				socket = this.#peers.get(socket);
+				console.log(`\r 📫 SOCKET #${socket.id} DRAIN                       `);
+				console.log('----------------------------------------');
+				console.log(`  IP: ${socket.ip}`);
+				console.log(`  ROUTE: ${mountpoint}`);
+				console.log(`  BACK PRESSURE: ${socket.backpressure}`);
+				console.log('----------------------------------------');
+
+				hooks.drain && hooks.drain(socket, this.#peers);
+
+				console.log(`  TIME: ${socket.time}ms`);
+				console.log('----------------------------------------');
 			},
 		});
 	}
@@ -686,9 +766,7 @@ export class Router extends Type(Emitter, {
 				"/": routes
 			};
 		
-		const hook = routes["/*"];
-		routes["/*"] = (req, res) => hook ?
-							hook(req, res) : res.not_found();
+		routes["/*"] = routes["/*"] ?? ((req, res) => res.not_found());
 		this.static(
 			routes.map(
 				([
@@ -715,17 +793,6 @@ export class Surf extends Emitter {
 	#middleware = [];
 	#bodyware = {
 		parse: [
-			// JSON DATA REQUEST
-			[
-				req => req.type === 'application/json',
-				(body, req) => {
-					try {
-						return JSON.parse(body);
-					} catch(e) {
-						return req.bad_request(`${STATUS.BadRequest} MALFORMED JSON`);
-					}
-				}
-			],
 			// MULTIPART FORM DATA REQUEST
 			[
 				req => req.type.startsWith('multipart/form-data'),
@@ -744,43 +811,43 @@ export class Surf extends Emitter {
 			// TODO: handle binary by default
 		],
 		stringify: [
-			// JSON DATA RESPONSE
+			// ANY REDIRECT:
 			[
-				req => req.accepted.includes('application/json'), // this should be response.type?
-				(body, req, res) => {
-					res.type = 'application/json';
-					return JSON.stringify(body) ?? '';
-				}
+				(req, res) => res.header('Location'),
+				() => null
 			],
 			// PLAIN TEXT RESPONSE (DEFAULT)
 			[
-				() => true, // Tern'er into plain-text, son!
-				body => String(body) // <-- We should get [object Object] for non-handled types.
+				() => true,
+				body => String(body)
 			]
 			// TODO: handle binary by default
 		]
-	}
-
+	};
 	#socketware = {
-		parse(msg, socket) {
-			return String(msg)
+		parse(string) {
+			return String(value);
 		},
-		stringify(msg, socket) {
-			return String(msg);
+		stringify(value) {
+			return String(value);
 		},
-		read(binary, socket) {
-			return binary;
+		read(body, socket) {
+			return body;
 		},
-		write(binary, socket) {
-			return binary;
+		write(body, socket) {
+			return body;
 		}
-	}
+	};
 
 	constructor(router) {
 		super();
 		this.#router =
 			router instanceof Router ?
 				router : new Router(router);
+		
+		// DEFAULT BODYWARE AND SOCKETWARE:
+		this.bodyware(BODYWARE_JSON);
+		this.socketware(SOCKETWARE);
 	}
 
 	middleware(...intercepts) {
@@ -789,9 +856,9 @@ export class Surf extends Emitter {
 	}
 
 	bodyware(...intercepts) {
-		intercepts.forEach(({parse, stringify}) => {
-			parse && (this.#bodyware.parse = parse.concat(this.#bodyware.parse));
-			stringify && (this.#bodyware.stringify = stringify.concat(this.#bodyware.stringify));
+		intercepts.reverse().forEach(({parse, stringify}) => {
+			parse && this.#bodyware.parse.unshift(parse);
+			stringify && this.#bodyware.stringify.unshift(stringify);
 		});
 		return this;
 	}
@@ -822,7 +889,7 @@ export class Surf extends Emitter {
 				console.log('    •', method.toUpperCase());
 
 				if (method === "listen") {
-					const listener = new Listener(hook, this.#socketware);
+					const listener = new Listener(mountpoint, hook, this.#socketware);
 					listener.forEach(([channel, hook]) => {
 						console.log('      -', channel, is.function(hook) ? '👀' : hook);
 					});
@@ -846,8 +913,8 @@ export class Surf extends Emitter {
 									response,
 									this.#bodyware.parse
 								);
-							
-							console.log(`\r 📥 INCOMING REQUEST [${request.method} ${request.type}]`);
+
+							console.log(`\r 📥 INCOMING REQUEST [${request.method} ${request.type}]               `);
 							console.log('----------------------------------------');
 							console.log(`  ORIGIN: ${request.ip}`);
 							console.log(`  URI: ${request.host}${request.uri}`);
@@ -921,10 +988,10 @@ export class Surf extends Emitter {
 
 				setInterval(() => {
 					if (!this.#handling) {
-						const uptime = Math.floor((Date.now() - timestamp) / 1000);
-						process.stdout.write(`\r ${CLOCK[uptime % 12]} UPTIME: ${uptime}s  💁 REQUESTS: ${this.#requests} `);
+						const uptime = Math.ceil((Date.now() - timestamp) / 1000);
+						process.stdout.write(`\r ${CLOCK[uptime % 12]} UPTIME: ${uptime}s  💁 REQUESTS: ${this.#requests}  👥 PEERS: ${SOCKETS_IN_USE} `);
 					}
-				}, 500);
+				}, 250);
 			}
 			else {
 				console.log(` 🇽 ERROR BINDING TO SOCKET ⚓ ${port}`)

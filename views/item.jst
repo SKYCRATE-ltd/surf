@@ -1,0 +1,85 @@
+<h1>${ item.name }</h1>
+
+<div>
+	<label>handle:</label>
+	<input id="handle" type="text" placeholder="Enter username..." />
+</div>
+<div id="messages">
+	${ await iterate(item.messages, "message", "div") }
+</div>
+<div>
+	<input id="input" type="text" placeholder="Type here..." />
+	<button id="send">SEND</button>
+</div>
+
+<script type="module">
+	class Socket extends WebSocket {
+		constructor(handlers) {
+			super('ws://' + location.host + '/${ item.id }');
+			this.addEventListener(
+				'open',
+				e => handlers.open && handlers.open(e)
+			);
+			this.addEventListener(
+				'message',
+				e => handlers.message &&
+						handlers.message(
+							typeof e.data === 'string' ?
+								JSON.parse(e.data) : e.data)
+			);
+			this.addEventListener(
+				'close',
+				e => handlers.close &&
+						handlers.close(e.code, e.reason, e.wasClean)
+			);
+			this.addEventListener(
+				'error',
+				e => handlers.error && handlers.error(e)
+			);
+		}
+
+		send(data) {
+			return super.send(JSON.stringify({...data, id: '${ item.id }'}));
+		}
+	}
+	
+	const user = document.getElementById('handle');
+	const input = document.getElementById('input');
+	const send = document.getElementById('send');
+	const messages = document.getElementById('messages');
+
+	const sock = new Socket({
+		open() {
+			console.log('OPENED SOCKET!');
+		},
+		message(msg) {
+			console.log('Message Received!');
+			const {
+				sender, message, timestamp
+			} = msg;
+			const span = document.createElement('div');
+			span.textContent = sender + '@' +
+				new Date(timestamp).toLocaleTimeString() +
+					': "' + message + '"';
+			messages.append(span);
+		},
+		close(code, reason) {
+			console.log('CLOSED SOCKET!');
+			console.log(code, reason);
+		}
+	});
+
+	send.addEventListener('click', e => {
+		const sender = user.value.trim();
+		const message = input.value.trim();
+		if (!sender)
+			return alert('Please enter a username :)');
+		if (!message)
+			return alert('Please say something first!');
+		sock.send({
+			message,
+			sender
+		});
+		input.value = '';
+	}, false);
+</script>

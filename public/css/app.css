@@ -1,0 +1,279 @@
+/*!
+ *  Hack typeface https://github.com/source-foundry/Hack
+ *  License: https://github.com/source-foundry/Hack/blob/master/LICENSE.md
+ */
+/* FONT PATHS
+ * -------------------------- */
+@font-face {
+	font-family:'Hack';
+	src: url('fonts/hack-regular.woff2?sha=3114f1256') format('woff2'), url('fonts/hack-regular.woff?sha=3114f1256') format('woff');
+	font-weight:400;
+	font-style:normal;
+}
+
+@font-face {
+	font-family: 'Hack';
+	src: url('fonts/hack-bold.woff2?sha=3114f1256') format('woff2'), url('fonts/hack-bold.woff?sha=3114f1256') format('woff');
+	font-weight:700;
+	font-style:normal;
+}
+
+  @font-face {
+	font-family:'Hack';
+	src: url('fonts/hack-italic.woff2?sha=3114f1256') format('woff2'), url('fonts/hack-italic.woff?sha=3114f1256') format('woff');
+	font-weight:400;
+	font-style:italic;
+}
+
+@font-face {
+	font-family: 'Hack';
+	src: url('fonts/hack-bolditalic.woff2?sha=3114f1256') format('woff2'), url('fonts/hack-bolditalic.woff?sha=3114f1256') format('woff');
+	font-weight:700;
+	font-style:italic;
+}
+
+:root {
+	--white:#FFF9F4;
+	--black:#373B44;
+	--green:#CDD56E;
+	--yellow:#F9D423;
+	--orange:#FC913A;
+	--red:#FF4E50;
+	--blue:#71CBC4;
+	--pink:#FF9E9D;
+}
+
+body {
+	background-color:var(--black);
+	color:var(--white);
+	font-family:Hack, monospace;
+	font-size:16pt;
+}
+
+#content {
+	max-width:720px;
+	min-width:360px;
+	padding:20pt;
+	margin:60pt auto 30pt;
+}
+
+header {
+	position:relative;
+}
+
+header button.delete {
+	position:absolute;
+	right:0;
+	top:5pt;
+}
+
+h1 {
+	padding-right:40pt;
+}
+
+hr {
+	margin:40pt;
+	height:0;
+	border-top:1px solid grey;
+}
+
+a {
+	color:var(--blue);
+}
+
+a:hover {
+	text-decoration:underline;
+}
+
+ol, ul {
+	margin:20pt;
+}
+
+ol li, ul li {
+	margin-bottom:10pt;
+}
+
+li.urgent > a::after {
+	/* content:"\26A0"; */
+	content:"⚠️";
+	margin-left:7pt;
+}
+
+li.high > a::after {
+	content:"☝️";
+	margin-left:7pt;
+}
+
+li.low > a::after {
+	content:"👇️";
+	margin-left:7pt;
+}
+
+.completed li {
+	text-decoration:line-through;
+}
+
+.completed li a {
+	color:grey;
+}
+
+form div {
+	position:relative;
+	margin:10pt;
+}
+
+form div > * {
+	vertical-align:text-top;
+	margin-bottom:10pt;
+}
+
+select, input, textarea {
+	color:var(--black);
+	border:none;
+	font-family:Hack, monospace;
+	font-size:16pt;
+	padding:5pt 7pt;
+	width:calc(100% - 25% - 20pt);
+}
+
+textarea {
+	min-height:90px;
+}
+
+label {
+	display:inline-block;
+	text-align:right;
+	width:25%;
+}
+
+label::after {
+	content:":";
+	position:relative;
+	top:1px;
+	padding-right:10pt;
+	opacity:0.36;
+}
+
+label.required::before {
+	content:"*";
+	color:var(--orange);
+	padding-right:5pt;
+}
+
+span.status {
+	padding-right:10pt;
+}
+
+button {
+	cursor:pointer;
+	font-size:16pt;
+	padding:5pt 7pt;
+}
+
+button.add {
+	background-color:var(--green);
+}
+button.add::before {
+	content:"\271A";
+	padding-right:7pt;
+}
+
+button.edit {
+	background-color:var(--yellow);
+}
+button.edit::before {
+	content:"\270E";
+	padding-right:7pt;
+}
+
+button.save {
+	background-color:var(--blue);
+}
+button.save::before {
+	content:"\2714";
+	padding-right:7pt;
+}
+
+button.cancel {
+	background-color:var(--orange);
+}
+button.cancel::before {
+	content:"\2718";
+	padding-right:7pt;
+}
+
+button.back {
+	color:var(--white);
+	background-color:transparent;
+	font-size:22pt;
+}
+button.back:hover {
+	color:var(--black);
+}
+
+button.delete {
+	font-size:26pt;
+	color:var(--white);
+	background-color:transparent;
+}
+
+button.delete:hover {
+	color:var(--white);
+	background-color:var(--red) !important;
+}
+
+button:hover {
+	background-color:var(--white);
+}
+
+button[disabled] {
+	display:none;
+}
+
+.tags {
+	color:var(--pink);
+	font-size:0.75em;
+	opacity:0.48;
+}
+
+.tags::before {
+	content:"🏷️";
+	padding-right:5pt;
+}
+
+.actions {
+	margin-top:40pt;
+	text-align:right;
+}
+
+.low {
+	color:var(--blue);
+}
+
+.open, .normal {
+	color:var(--green);
+}
+
+.high {
+	color:var(--orange);
+}
+
+.closed, .urgent {
+	color:var(--red);
+}
+
+@media (max-width:640px) {
+	label {
+		width:auto;
+		display:block;
+		text-align:left;
+	}
+
+	label.status {
+		display:inline-block;
+	}
+
+	select, input, textarea {
+		width:calc(100% - 20pt);
+	}
+}
