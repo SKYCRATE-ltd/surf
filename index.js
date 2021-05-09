@@ -284,11 +284,20 @@ export class Response extends Type({
 	}
 
 	send_buffer(buffer, size, success, rs) {
+		console.log(`\r 📡 FILE STREAM [${type}]                         `);
+		console.log(  '----------------------------------------          ');
+		console.log(  `  PATH: ${filename}                               `);
+		console.log(  `  OFFSET: ${buffer.byteOffset}                    `);
+		console.log(  `  SIZE: ${size}                                   `);
+
 		let [ok, done] = this.#response.tryEnd(buffer, size);
 		if (done) {
+		console.log(  ` ✅ FILE SENT in ${this.time}ms                   `);
+		console.log(  '----------------------------------------          ');
 			success ?? success();
 			rs ?? rs.destroy();
 		}
+
 		return ok;
 	}
 	
@@ -297,11 +306,11 @@ export class Response extends Type({
 			return YIELD;
 		
 		const res = this.#response;
-		if (++this.#sends > 3) {
+		if (++this.#sends > 5) {
 			res.writeStatus(this.#status = STATUS.LoopDetected)
 				.end(`${
 					STATUS.LoopDetected
-				} LOOP DETECTED (more than 3 attempts to send on the same request)`);
+				} LOOP DETECTED (more than 5 attempts to send on the same request)`);
 			return HANDLED;
 		}
 		this.#status = status;
@@ -327,11 +336,11 @@ export class Response extends Type({
 			this.header('Content-Type', this.type);
 
 			// TODO: console outputs should be a hook/callback
-			console.log(` 📤 OUTBOUND RESPONSE [${this.type}]`);
-			console.log('----------------------------------------');
-			console.log(`  DESTINATION: ${this.ip}`);
-			console.log(`  URI: ${req.host}${req.uri}`);
-			console.log(`  ROUTE: ${req.route}`);
+			console.log(`\r 📤 OUTBOUND RESPONSE [${this.type}]              `);
+			console.log(  '----------------------------------------          ');
+			console.log(  `  DESTINATION: ${this.ip}                         `);
+			console.log(  `  URI: ${req.host}${req.uri}                      `);
+			console.log(  `  ROUTE: ${req.route}                             `);
 			console.log();
 
 			if (this.headers.length) {
@@ -350,8 +359,8 @@ export class Response extends Type({
 						status >= 300 ? '🔶' :
 							status >= 200 ? '🔵' : '🆗'
 				} STATUS: ${status} ${STATUS_CODES[status]}\n`);
-			console.log(` ✅ RESPONSE SENT in ${this.time}ms`);
-			console.log('----------------------------------------');
+			console.log(  ` ✅ RESPONSE SENT in ${this.time}ms               `);
+			console.log(  '----------------------------------------          ');
 			// TODO
 
 			res.cork(() => {
@@ -373,7 +382,7 @@ export class Response extends Type({
 		].includes(status) ?
 			this.error(`REDIRECT ERROR: INVALID STATUS '${status}'`) :
 				this.send(
-					null, //`${status} RESOURCE ${STATUS_CODES[status].toUpperCase()} => ${Location}`,
+					`${status} RESOURCE ${STATUS_CODES[status].toUpperCase()} => ${uri}`,
 					status,
 					[
 						['Location', uri]
@@ -381,7 +390,7 @@ export class Response extends Type({
 				);
 	}
 
-	created(uri, body = `${STATUS.Created} RESOURCE CREATED => ${Location}`) {
+	created(uri, body = `${STATUS.Created} RESOURCE CREATED => ${uri}`) {
 		return this.send(body, STATUS.Created, [['Location', uri]]);
 	}
 
@@ -393,18 +402,19 @@ export class Response extends Type({
 		return this.send(body, STATUS.InternalServerError);
 	}
 
-	unauthorized(realm = "Access to privileged data.", ...types) {
-		if (!types.length)
-			types.push('Basic');
+	unauthorized(type = 'Basic', realm = "Access to privileged data.") {
 		const status = STATUS.Unauthorized;
 		return this.send(
 			`${status} ${STATUS_CODES[status].toUpperCase()} => "${realm}"`,
 			status,
-			types.map(
-				type =>
-					["WWW-Authenticate", `${type} realm="${realm}", charset="UTF-8"`]
-			)
+			[
+				["WWW-Authenticate", `${type} realm="${realm}", charset="UTF-8"`]
+			]
 		);
+	}
+
+	forbidden(body = `${STATUS.Forbidden} ACCESS FORBIDDEN`) {
+		return this.send(body, STATUS.Forbidden);
 	}
 
 	stream(
@@ -420,14 +430,18 @@ export class Response extends Type({
 
 		stream.on('data', chunk => {
 			if (!this.send_buffer(buffer = BUFF(chunk), size, success, stream)) {
-				readstream.pause();
+				stream.pause();
 				l_offset = res.getWriteOffset();
 			}
 		}).on('error', e => {
+			console.log(  ` 💔 FILE STREAM ERROR ${e}                        `);
+			console.log(  '----------------------------------------          ');
 			this.close();
 			onerror(e);
 		});
 		this.onabort(() => {
+			console.log(  ` 🙅 USER ABORTED FILE STREAM ${e}                 `);
+			console.log(  '----------------------------------------          ');
 			stream.destroy();
 			onabort();
 		});
@@ -442,22 +456,41 @@ export class Response extends Type({
 	}
 
 	file_head(filename) {
-		let size = stats(filename).size;
-		let type = mime.getType(filename);
+		const size = stats(filename).size;
+		const type = mime.getType(filename);
+		const req = this.#request;
+		const res = this.#response;
 
-		this.#response.writeStatus(OK)
-			.writeHeader("Content-Type", type)
-			.writeHeader("Content-Length", size);
-		
+		console.log(`\r 📂 FILE HEAD [${type}]                         `);
+		console.log('----------------------------------------          ');
+		console.log(`  DESTINATION: ${this.ip}`);
+		console.log(`  URI: ${req.host}${req.uri}`);
+		console.log(`  ROUTE: ${req.route}`);
+		console.log(`  PATH: ${filename}`);
+		console.log(`  SIZE: ${size}`);
+		console.log('----------------------------------------          ');
+
+		res.cork(() => {
+			res.writeStatus(OK)
+				.writeHeader("Content-Type", type)
+				.writeHeader("Content-Length", size);
+		});
+
 		return size;
 	}
 
 	file(filename, success, onerror, onabort) {
-		const size = this.file_head(filename);
-		let readstream = read_stream(filename);
+		console.log(`\r 💾 FILE DOWNLOAD                               `);
+		console.log(`    [${this.#request.uri} => ${filename}]         `);
+		console.log('----------------------------------------          ');
 		return exists(filename) ?
-			this.stream(readstream, size, success, onerror, onabort) :
-				this.not_found();
+			this.stream(
+				read_stream(filename),
+				this.file_head(filename),
+				success,
+				onerror,
+				onabort
+			) : this.not_found();
 	}
 
 	live_stream(mime_type, stream, oncomplete, onerror, onabort) {

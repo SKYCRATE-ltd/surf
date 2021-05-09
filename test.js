@@ -9,7 +9,8 @@ import { uuid } from "computer";
 import { Model } from "zed";
 
 import surf from "./index.js";
-import Templates from "./bodyware/templates.js"
+import Templates from "./bodyware/templates.js";
+import Directory from "./routers/directory.js";
 
 class Update extends Model({
 	sender: String,
@@ -60,6 +61,7 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 const CHATROOMS = new Rooms;
 
 surf({
+	"/public": new Directory(`${DIR}/public`, true),
 	"/": {
 		get(req, res) {
 			res.title = 'Surf Chat Server';
