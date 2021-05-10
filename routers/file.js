@@ -11,7 +11,5 @@ export default class File extends Endpoint {
 				return res.file(path);
 			}
 		});
-
-		console.log({...this});
 	}
 }

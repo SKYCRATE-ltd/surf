@@ -284,19 +284,20 @@ export class Response extends Type({
 	}
 
 	send_buffer(buffer, size, success, rs) {
-		console.log(`\r 📡 FILE STREAM [${type}]                         `);
-		console.log(  '----------------------------------------          ');
-		console.log(  `  PATH: ${filename}                               `);
-		console.log(  `  OFFSET: ${buffer.byteOffset}                    `);
+		console.log(`\r 📡 FILE STREAM                                   `);
+		console.log(  '------------------------------------------------------------ ');
+		console.log(  `  FILE: ${this.#request.uri}                      `);
+		console.log(  `  OFFSET: ${buffer.byteLength}                    `);
 		console.log(  `  SIZE: ${size}                                   `);
 
 		let [ok, done] = this.#response.tryEnd(buffer, size);
 		if (done) {
-		console.log(  ` ✅ FILE SENT in ${this.time}ms                   `);
-		console.log(  '----------------------------------------          ');
+			console.log(  '------------------------------------------------------------ ');
+			console.log(` ✅ FILE '${this.#request.uri}' SENT in ${this.time}ms                   `);
 			success ?? success();
 			rs ?? rs.destroy();
 		}
+		console.log(  '------------------------------------------------------------ ');
 
 		return ok;
 	}
@@ -337,7 +338,7 @@ export class Response extends Type({
 
 			// TODO: console outputs should be a hook/callback
 			console.log(`\r 📤 OUTBOUND RESPONSE [${this.type}]              `);
-			console.log(  '----------------------------------------          ');
+			console.log(  '------------------------------------------------------------ ');
 			console.log(  `  DESTINATION: ${this.ip}                         `);
 			console.log(  `  URI: ${req.host}${req.uri}                      `);
 			console.log(  `  ROUTE: ${req.route}                             `);
@@ -360,7 +361,7 @@ export class Response extends Type({
 							status >= 200 ? '🔵' : '🆗'
 				} STATUS: ${status} ${STATUS_CODES[status]}\n`);
 			console.log(  ` ✅ RESPONSE SENT in ${this.time}ms               `);
-			console.log(  '----------------------------------------          ');
+			console.log(  '------------------------------------------------------------ ');
 			// TODO
 
 			res.cork(() => {
@@ -435,13 +436,13 @@ export class Response extends Type({
 			}
 		}).on('error', e => {
 			console.log(  ` 💔 FILE STREAM ERROR ${e}                        `);
-			console.log(  '----------------------------------------          ');
+			console.log(  '------------------------------------------------------------ ');
 			this.close();
 			onerror(e);
 		});
 		this.onabort(() => {
 			console.log(  ` 🙅 USER ABORTED FILE STREAM ${e}                 `);
-			console.log(  '----------------------------------------          ');
+			console.log(  '------------------------------------------------------------ ');
 			stream.destroy();
 			onabort();
 		});
@@ -462,27 +463,25 @@ export class Response extends Type({
 		const res = this.#response;
 
 		console.log(`\r 📂 FILE HEAD [${type}]                         `);
-		console.log('----------------------------------------          ');
+		console.log('------------------------------------------------------------ ');
 		console.log(`  DESTINATION: ${this.ip}`);
 		console.log(`  URI: ${req.host}${req.uri}`);
-		console.log(`  ROUTE: ${req.route}`);
 		console.log(`  PATH: ${filename}`);
 		console.log(`  SIZE: ${size}`);
-		console.log('----------------------------------------          ');
-
-		res.cork(() => {
-			res.writeStatus(OK)
-				.writeHeader("Content-Type", type)
-				.writeHeader("Content-Length", size);
-		});
+		console.log('------------------------------------------------------------ ');
+		
+		res.writeStatus(STATUS.OK)
+			.writeHeader("Content-Type", type);
 
 		return size;
 	}
 
 	file(filename, success, onerror, onabort) {
-		console.log(`\r 💾 FILE DOWNLOAD                               `);
-		console.log(`    [${this.#request.uri} => ${filename}]         `);
-		console.log('----------------------------------------          ');
+		console.log(`\r 💾 FILE DOWNLOAD                                 `);
+		console.log(  '------------------------------------------------------------ ');
+		console.log(  ` 🌐 ${this.#request.uri}`);
+		console.log(  ` 💻 ${filename}`);
+		console.log(  '------------------------------------------------------------ ');
 		return exists(filename) ?
 			this.stream(
 				read_stream(filename),
@@ -494,7 +493,7 @@ export class Response extends Type({
 	}
 
 	live_stream(mime_type, stream, oncomplete, onerror, onabort) {
-		this.#response.writeStatus(OK)
+		this.#response.writeStatus(STATUS.OK)
 			.writeHeader("Content-Type", mime_type);
 		return this.stream(stream, Number.POSITIVE_INFINITY, oncomplete, onerror, onabort);
 	}
@@ -578,16 +577,15 @@ export class Socket extends Type {
 	pipe(msg) {
 		const is_binary = msg instanceof Binary;
 		console.log(`\r 📨 SOCKET OUTBOUND MESSAGE`);
-		console.log('----------------------------------------');
+		console.log('------------------------------------------------------------');
 		console.log(`  ROUTE: ${this.#mountpoint}`);
 		console.log(`  BINARY: ${is_binary}`);
-		console.log();
 		console.log({...msg});
 
 		msg = is_binary ?
 			this.#middleware.write(msg, this) :
 				this.#middleware.stringify(msg, this);
-		console.log('----------------------------------------');
+		console.log('------------------------------------------------------------');
 		return [
 			msg,
 			is_binary
@@ -690,21 +688,21 @@ export class Listener extends Type({
 
 			open: socket => {
 				socket = this.#peers.add(socket, mountpoint, middleware);
-				console.log(`\r 📭 SOCKET #${socket.id} OPEN                         `);
-				console.log('----------------------------------------');
+				console.log(`\r 📭 SOCKET #${socket.id} OPEN                            `);
+				console.log('------------------------------------------------------------');
 				console.log(`  IP: ${socket.ip}`);
 				console.log(`  ROUTE: ${mountpoint}`);
 				console.log(`  PEERS: ${this.#peers.length}`);
-				console.log('----------------------------------------');
+				console.log('------------------------------------------------------------');
 				SOCKETS_IN_USE++;
 				hooks.open && hooks.open(socket, this.#peers);
 				console.log(`  TIME: ${socket.time}ms`);
-				console.log('----------------------------------------');
+				console.log('------------------------------------------------------------');
 			},
 			message: (socket, message, is_binary) => {
 				socket = this.#peers.get(socket);
-				console.log(`\r 📬 SOCKET #${socket.id} RECEIVED MESSAGE             `);
-				console.log('----------------------------------------');
+				console.log(`\r 📬 SOCKET #${socket.id} RECEIVED MESSAGE                `);
+				console.log('------------------------------------------------------------');
 				console.log(`  IP: ${socket.ip}`);
 				console.log(`  ROUTE: ${mountpoint}`);
 				console.log(`  BINARY: ${is_binary}`);
@@ -715,7 +713,7 @@ export class Listener extends Type({
 							middleware.parse(DECODE(message), socket);
 					
 					console.log({...message});
-					console.log('----------------------------------------');
+					console.log('------------------------------------------------------------');
 
 					const rtrn = hooks.message(
 						message,
@@ -727,37 +725,37 @@ export class Listener extends Type({
 				}
 
 				console.log(`  TIME: ${socket.time}ms`);
-				console.log('----------------------------------------');
+				console.log('------------------------------------------------------------');
 			},
 			close: (socket, code, reason) => {
 				socket = this.#peers.remove(socket);
 				reason = DECODE(reason);
-				console.log(`\r 📪 SOCKET #${socket.id} CLOSED                      `);
-				console.log('----------------------------------------');
+				console.log(`\r 📪 SOCKET #${socket.id} CLOSED                          `);
+				console.log('------------------------------------------------------------');
 				console.log(`  IP: ${socket.ip}`);
 				console.log(`  ROUTE: ${mountpoint}`);
 				console.log(`  REASON: ${code} ${reason}`);
 				console.log(`  PEERS: ${this.#peers.length}`);
-				console.log('----------------------------------------');
+				console.log('------------------------------------------------------------');
 				SOCKETS_IN_USE--;
 				hooks.close && hooks.close(code, reason, socket, this.#peers);
 
 				console.log(`  TIME: ${socket.time}ms`);
-				console.log('----------------------------------------');
+				console.log('------------------------------------------------------------');
 			},
 			drain: socket => {
 				socket = this.#peers.get(socket);
-				console.log(`\r 📫 SOCKET #${socket.id} DRAIN                       `);
-				console.log('----------------------------------------');
+				console.log(`\r 📫 SOCKET #${socket.id} DRAIN                           `);
+				console.log('------------------------------------------------------------');
 				console.log(`  IP: ${socket.ip}`);
 				console.log(`  ROUTE: ${mountpoint}`);
 				console.log(`  BACK PRESSURE: ${socket.backpressure}`);
-				console.log('----------------------------------------');
+				console.log('------------------------------------------------------------');
 
 				hooks.drain && hooks.drain(socket, this.#peers);
 
 				console.log(`  TIME: ${socket.time}ms`);
-				console.log('----------------------------------------');
+				console.log('------------------------------------------------------------');
 			},
 		});
 	}
@@ -790,16 +788,18 @@ export class Router extends Type(Emitter, {
 	constructor(name, routes) {
 		super();
 
-		if (!routes)
-			routes = name,
-			this._name = this.constructor.name;
+		if (!routes) {
+			routes = name;
+			name = this.constructor.name;
+		}
 		
+		this._name = name;
+
 		if (is.function(routes))
 			routes = {
 				"/": routes
 			};
 		
-		routes["/*"] = routes["/*"] ?? ((req, res) => res.not_found());
 		this.static(
 			routes.map(
 				([
@@ -901,30 +901,47 @@ export class Surf extends Emitter {
 		return this;
 	}
 
-	parse(router, mount = '/') {
+	parse(router, mount = SLASH) {
 		const app = this.#app;
+		// const INDENT = mount.split(SLASH).filter(DO_NOTHING).map(() => '  ').join('');
 		
-		console.log(` 🔀 ${router._name}  🡆  ${mount}`);
-		console.log('----------------------------------------\n');
-
+		console.log(  '------------------------------------------------------------ ');
+		if (mount === SLASH)
+			console.log(  ` 🔝 ${router._name}`);
+		else
+			console.log(  ` 🔀 ${mount} 🡺 ${router._name}`);
+		
+		// We have this catch for ALL routers execept for any that have been mixed-in!
+		router["/*"] = router["/*"] ?? new Endpoint((req, res) => res.not_found());
 		router.forEach(([pattern, endpoint]) => {
 			const mountpoint = CONCAT(mount, pattern);
-
-			console.log(`  ${mountpoint}  🡆  ${pattern}`);
-
+			
 			if (endpoint instanceof Router)
 				return this.parse(endpoint, mountpoint);
-			
+
+			if (!mountpoint.endsWith('*')) {
+				console.log(  '------------------------------------------------------------ ');
+				console.log(  ` 🔗 ${mountpoint}`);
+			}
+
 			endpoint.forEach(([method, hook]) => {
 				if (is.undefined(hook))
 					return;
 				
-				console.log('    •', method.toUpperCase());
+				if (!mountpoint.endsWith('*') && method !== "any")
+					console.log(`     ✔ ${method.toUpperCase()}`);
 
 				if (method === "listen") {
 					const listener = new Listener(mountpoint, hook, this.#socketware);
-					listener.forEach(([channel, hook]) => {
-						console.log('      -', channel, is.function(hook) ? '👀' : hook);
+					listener.forEach(([channel, handle]) => {
+						console.log(
+							`       -`,
+							channel,
+							is.function(handle) ?
+								((is.function(hook) && channel === "message") || hook[channel] ?
+									'👀' :
+										'💤' ):
+											handle);
 					});
 					app.ws(mountpoint, listener);
 				} else {
@@ -947,15 +964,17 @@ export class Surf extends Emitter {
 									this.#bodyware.parse
 								);
 
-							console.log(`\r 📥 INCOMING REQUEST [${request.method} ${request.type}]               `);
-							console.log('----------------------------------------');
-							console.log(`  ORIGIN: ${request.ip}`);
-							console.log(`  URI: ${request.host}${request.uri}`);
-							console.log(`  ROUTE: ${request.route}`);
+							console.log(`\r 📥 INCOMING REQUEST [${request.method} ${request.type}]          `);
+							console.log(  '------------------------------------------------------------ ');
+							console.log(  `  ORIGIN: ${request.ip}`);
+							console.log(  `  URI: ${request.host}${request.uri}`);
+							console.log(  `  ROUTE: ${request.route}`);
 							console.log();
 							console.log(request.headers.map(([key, value]) =>
-								`  ${key.toUpperCase()} = ${value.length > 34 ? value.substr(0, 34) + '...' : value}`).join(NEWLINE));
-							console.log('----------------------------------------');
+								`  ${key.toUpperCase()} = ${
+									value.length > 34 ? value.substr(0, 34) + '...' : value
+								}`).join(NEWLINE));
+							console.log(  '------------------------------------------------------------ ');
 
 							const middleware = this.#middleware;
 							for (let index = 0, l = middleware.length; index < l; index++) {
@@ -967,7 +986,7 @@ export class Surf extends Emitter {
 							if (output && output !== HANDLED) {
 								if (output === YIELD) {
 									console.log(`- 🚩 YIELD ${request.route}`);
-									console.log('----------------------------------------');
+									console.log('------------------------------------------------------------ ');
 								}
 								else
 									await response.send(output);
@@ -978,10 +997,8 @@ export class Surf extends Emitter {
 					)
 				}
 			});
-
-			console.log();
+			
 		});
-		console.log('----------------------------------------');
 	}
 
 	listen(...args) {
@@ -993,10 +1010,9 @@ export class Surf extends Emitter {
 			error = DO_NOTHING
 		] = args;
 
-		console.log('----------------------------------------');
-		console.log(` 🏄 STARTING SURF SERVER`);
+		console.log('------------------------------------------------------------ ');
+		console.log(` 🏄 STARTING SURF SERVER                          `);
 		console.log(` 📆 ${new Date().toLocaleString().replace(',', ' ⌚')}`);
-		console.log('----------------------------------------');
 		this.#app = (env => {
 			const key_file_name = env.KEY_FILE;
 			const cert_file_name = env.CERT_FILE;
@@ -1013,16 +1029,24 @@ export class Surf extends Emitter {
 		this.parse(this.#router);
 
 		this.#app.listen(port, socket => {
+			console.log('------------------------------------------------------------ ');
 			if (socket) {
 				const timestamp = Date.now();
 
-				console.log(` ✅ SERVER STARTED ⚓ ${port}`);
+				console.log(` ✅ SERVER STARTED ⚓ ${port}          `);
 				success(port, socket);
 
 				setInterval(() => {
 					if (!this.#handling) {
 						const uptime = Math.ceil((Date.now() - timestamp) / 1000);
-						process.stdout.write(`\r ${CLOCK[uptime % 12]} UPTIME: ${uptime}s  💁 REQUESTS: ${this.#requests}  👥 PEERS: ${SOCKETS_IN_USE} `);
+						process.stdout.write(
+							`\r 💁 REQUESTS: ${
+								this.#requests
+							}  👥 PEERS: ${SOCKETS_IN_USE}  ${
+								CLOCK[uptime % 12]
+							} UPTIME: ${
+								uptime
+							}s  `);
 					}
 				}, 250);
 			}
@@ -1030,12 +1054,12 @@ export class Surf extends Emitter {
 				console.log(` 🇽 ERROR BINDING TO SOCKET ⚓ ${port}`)
 				error(port, socket);
 			}
-			console.log('----------------------------------------');
+			console.log('------------------------------------------------------------ ');
 		});
 		return this;
 	}
 }
 
 export default function surf(router) {
-	return new Surf(router instanceof Router ? router : new Router(router));
+	return new Surf(router);
 };

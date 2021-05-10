@@ -61,7 +61,9 @@ const DIR = dirname(fileURLToPath(import.meta.url));
 const CHATROOMS = new Rooms;
 
 surf({
-	"/public": new Directory(`${DIR}/public`, true),
+	// Favicons and the like:
+	...new Directory(`${DIR}/public/icons`),
+	...new Directory(`${DIR}/public`, "icons/"),
 	"/": {
 		get(req, res) {
 			res.title = 'Surf Chat Server';
@@ -98,7 +100,7 @@ surf({
 			CHATROOMS.get(id)?.add(update);
 			return peers.send(update);
 		}
-	}
+	},
 })
 .bodyware(
 	new Templates('WAVE', DIR),

@@ -3,12 +3,16 @@ import JST from "jst/backend/index.js";
 
 export default class Templates extends JST {
 	stringify = []; // <-- Our bodyware hook
+
 	constructor(title, directory, cache, extension) {
 		super(`${directory}/views`, cache, extension);
+
 		const master_render = this.layout('layout');
 
 		this.stringify = [
+
 			req => req.accepted.includes('text/html'),
+
 			async (body, req, res) => {
 				res.title = title;
 				res.type = "text/html";
@@ -31,6 +35,7 @@ export default class Templates extends JST {
 					}
 				);
 			}
+			
 		];
 	}
 }
