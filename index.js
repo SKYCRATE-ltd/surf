@@ -3,18 +3,27 @@ import {
 	statSync as stats,
 	createReadStream as read_stream,
 } from "fs";
+
 import Server from "uWebSockets.js";
 import mime from "mime";
+
+import { uuid } from "computer";
 import {
 	is
 } from "crux";
 import {
-	Type, Emitter, UInt
+	Type,
+	Emitter,
+	UInt,
+	Any,
+	Hook
 } from "zed";
 
 import {
 	CLOCK,
+	SEMI,
 	COLON,
+	COMMA,
 	EQUAL,
 	PIPE,
 	SLASH,
@@ -23,15 +32,13 @@ import {
 
 	STATUS,
 	YIELD,
-	HANDLED
+	HANDLED,
+	DO_NOTHING
 } from "./constants.js";
 import {STATUS_CODES} from "http";
 import BODYWARE_JSON from "./bodyware/json.js";
 import SOCKETWARE from "./socketware/default.js";
 
-const DISABLED = Server.DISABLED;
-const TYPED_ARRAY = Uint8Array.constructor.__proto__; // <-- TypedArray is tricky to get.
-const DO_NOTHING = x => x;
 const CONCAT = (a, b) => {
 	if (a === SLASH)
 		a = '';
@@ -48,10 +55,10 @@ const BUFF = buffer =>
 					buffer.byteOffset,
 					buffer.byteOffset + buffer.byteLength
 				);
-const QUERY = query =>
+const QUERY = (query, delim = AND) =>
 	query ? Object.fromEntries(new Map(
 		query.trim()
-			.split(AND)
+			.split(delim)
 			.map(x => x.trim())
 			.filter(DO_NOTHING) // Surprisingly, this does smthg; it removes empty strings!
 			.map(pair =>
@@ -61,15 +68,126 @@ const QUERY = query =>
 			)
 	)) : {};
 
-let SOCKETS_IN_USE = 0;
-
 class Binary extends Type {
 	static validate() {
 		return false;
 	}
 	static defines(instance) {
 		return instance.constructor === ArrayBuffer ||
-					instance.constructor.__proto__ === TYPED_ARRAY;
+					instance.constructor.__proto__ === Uint8Array.constructor.__proto__;
+	}
+}
+
+class Session extends Type({
+	id: String,
+	createdAt: Date,
+	updatedAt: Date,
+	expiresAt: Date,
+	data: Any,
+}) {
+	constructor(values) {
+		super(values);
+		this.reset();
+	}
+
+	reset(duration = 60000 * 10/* 10 mins from now is the default, baby */) {
+		this.expiresAt = new Date(Date.now() + duration);
+		return this;
+	}
+
+	expired(date = new Date()) {
+		return this.expiresAt.getTime() < date.getTime();
+	}
+}
+
+class Collection extends Map {
+	#hooks;
+
+	constructor(hooks) {
+		super();
+		this.#hooks = hooks;
+
+		hooks.init?.(this);
+
+		setInterval(() => {
+			this.forEach((item, id) => {
+				if (item.expired())
+					this.delete(id);
+			});
+		}, 1000 * 60); // Every sixty seconds
+	}
+
+	load(map) {
+		map.forEach(([id, item]) => this.set(id, new Session(item)));
+		return this;
+	}
+
+	create(id = uuid()) {
+		if (this.has(id))
+			return this.create();
+		
+		const createdAt = new Date();
+		const session = new Session({
+			id,
+			createdAt,
+			updatedAt: createdAt
+		});
+
+		console.log(`\r 📕 CREATING NEW SESSION                                     `);
+		console.log(  '------------------------------------------------------------ ');
+		console.log(  `  ID: ${id}`);
+		console.log(  `  CREATED: ${createdAt.toLocaleTimeString()}`);
+		console.log(  `  EXPIRES: ${session.expiresAt.toLocaleTimeString()}`);
+		console.log(  '------------------------------------------------------------ ');
+
+		return this.set(id, this.#hooks.create?.(session) || session);
+	}
+
+	get(id) {
+		const session = super.get(id);
+		if (session) {
+			session.reset();
+			console.log(`\r 📖 RETRIEVING SESSION                                        `);
+			console.log(  '------------------------------------------------------------ ');
+			console.log(  `  ID: ${id}`);
+			console.log(  `  CREATED: ${session.createdAt.toLocaleTimeString() || 'N/A'}`);
+			console.log(  `  EXPIRES: ${session.expiresAt.toLocaleTimeString() || 'N/A'}`);
+			console.log(  '------------------------------------------------------------ ');
+			
+			return this.#hooks.get?.(session) || session;
+		}
+		return session;
+	}
+
+	set(id, session) {
+		super.set(id, session);
+		return session;
+	}
+
+	update(id, data) {
+		const session = this.get(id);
+
+		if (session) {
+			session.data?.assign(data).reset();
+
+			console.log(`\r ✍ UPDATING SESSION                                          `);
+			console.log(  '------------------------------------------------------------ ');
+			console.log(  `  ID: ${id}`);
+			console.log(  `  CREATED: ${session.createdAt.toLocaleTimeString() || 'N/A'}`);
+			console.log(  `  EXPIRES: ${session.expiresAt.toLocaleTimeString() || 'N/A'}`);
+			console.log(  '------------------------------------------------------------ ');
+			
+			this.#hooks.update?.(session);
+		}
+		return this;
+	}
+
+	delete(id) {
+		console.log(`\r 💥 DELETING SESSION                                         `);
+		console.log(  '------------------------------------------------------------ ');
+		console.log(  `  ID: ${id}`);
+		console.log(  '------------------------------------------------------------ ');
+		return super.delete(this.#hooks.delete?.(id) || id);
 	}
 }
 
@@ -77,6 +195,31 @@ export class Request extends Type({
 	route: String,
 	uri: String,
 	method: String,
+	session: Session,
+	host: Hook(
+		req => req.header('host') || 'localhost'
+	),
+	params: Hook(
+		req => req.route.split(SLASH)
+				.filter(dir => dir.startsWith(COLON))
+				.map(param => param.substr(1))
+	),
+	filename: Hook(
+		req => req.uri.split(SLASH).pop()
+	),
+	cookies: Hook(
+		req => QUERY(req.header('cookie'), SEMI)
+	),
+	accepted: Hook(
+		req =>
+			req.header('accept')
+				?.split(COMMA)
+				.map(mime => mime.split(SEMI)[0])
+	),
+	type: Hook(
+		req =>
+			req.header('content-type') || 'text/plain'
+	),
 }) {
 	#headers;
 	#request; // <-- uWS
@@ -85,20 +228,6 @@ export class Request extends Type({
 
 	get ip() {
 		return this.#response.ip;
-	}
-
-	get headers() {
-		if (!this.#headers) {
-			this.#headers = [];
-			this.#request.forEach((key, value) => this.#headers.push([key, value]));
-		}
-		return this.#headers;
-	}
-
-	get params() {
-		return this.route.split(SLASH)
-				.filter(dir => dir.startsWith(COLON))
-				.map(param => param.substr(1));
 	}
 
 	get args() {
@@ -112,23 +241,15 @@ export class Request extends Type({
 		return QUERY(this.#request.getQuery());
 	}
 
-	get host() {
-		return this.header('host');
-	}
- 
-	get filename() {
-		return this.uri.split(SLASH).pop();
-	}
-
-	get accepted() {
-		return this.header('accept')?.split(',').map(mime => mime.split(';')[0]);
+	get headers() {
+		if (!this.#headers) {
+			this.#headers = [];
+			this.#request.forEach((key, value) => this.#headers.push([key, value]));
+		}
+		return this.#headers;
 	}
 
-	get type() {
-		return this.header('content-type') || 'text/plain'; // <-- or text/html?
-	}
-
-	constructor(route, req, res, middleware) {
+	constructor(route, req, res, middleware, sessions) {
 		super({
 			route: route,
 			uri: req.getUrl(),
@@ -139,13 +260,18 @@ export class Request extends Type({
 		this.#request = req; // uWS
 		this.#response = res; // Surf
 		this.#middleware = middleware;
+
+		if (sessions && this.accepted.includes('text/html')) {
+			this.session = sessions.get(this.cookies['session-id']) || sessions.create();
+			this.cookies['session-id'] = this.session.id;
+		}
 	}
 
 	header(key) {
 		return this.headers.find(([k]) => k === key)?.[1];
 	}
 
-	body(ondone, onerror = DO_NOTHING) {
+	body(ondone, onerror) {
 		if (!is.function(ondone))
 			return new Promise((resolve, reject) => this.body(resolve, reject));
 
@@ -169,7 +295,7 @@ export class Request extends Type({
 					
 				}
 				buffer === HANDLED ?
-					onerror(
+					onerror && onerror(
 						`${
 							this.#request.status
 						} ${
@@ -199,14 +325,15 @@ export class Request extends Type({
 }
 
 export class Response extends Type({
+	status: String,
 	type: 'text/plain'
 }) {
+	#ip;
 	#request; // <-- Surf
 	#response; // <-- uWS
 	#middleware = [];
 	
 	#title = [];
-	#status = '200';
 	#headers = [
 		["Surfs-Up", "v0.1 - Awesome"]
 	];
@@ -216,14 +343,10 @@ export class Response extends Type({
 	#onabort = DO_NOTHING;
 	#sends = 0;
 
-	get status() {
-		return this.#status;
-	}
-
 	get ip() {
-		return new TextDecoder("utf-8").decode(
+		return this.#ip ?? (this.#ip = DECODE(
 			this.#response.getRemoteAddressAsText()
-		).replace(/0000/g, '');
+		).replace(/0000/g, ''));
 	}
 
 	get id() {
@@ -260,7 +383,9 @@ export class Response extends Type({
 	}
 
 	constructor(res, middleware) {
-		super();
+		super({
+			status: STATUS.OK
+		});
 		this.#response = res; // uWS...
 		this.#middleware = middleware;
 		this.#timestamp = Date.now();
@@ -308,13 +433,13 @@ export class Response extends Type({
 		
 		const res = this.#response;
 		if (++this.#sends > 5) {
-			res.writeStatus(this.#status = STATUS.LoopDetected)
+			res.writeStatus(this.status = STATUS.LoopDetected)
 				.end(`${
 					STATUS.LoopDetected
 				} LOOP DETECTED (more than 5 attempts to send on the same request)`);
 			return HANDLED;
 		}
-		this.#status = status;
+		this.status = status;
 		
 		const req = this.#request;
 		const middleware = this.#middleware;
@@ -335,6 +460,12 @@ export class Response extends Type({
 			this.headers = headers; // Append new headers
 			this.title && this.header('Content-Title', this.title);
 			this.header('Content-Type', this.type);
+			const session_id = this.#request.session?.id;
+			if (session_id)
+				this.header(
+					'Set-Cookie',
+					`session-id=${session_id}; Secure; HttpOnly; SameSite=Strict`
+				);
 
 			// TODO: console outputs should be a hook/callback
 			console.log(`\r 📤 OUTBOUND RESPONSE [${this.type}]              `);
@@ -346,14 +477,13 @@ export class Response extends Type({
 
 			if (this.headers.length) {
 				console.log(this.headers.map(([key, value]) =>
-					`  ${key.toUpperCase()} = ${value.length > 34 ? value.substr(0, 34) + '...' : value}`).join(NEWLINE));
+					`  ${key} = ${value.length > 34 ? value.substr(0, 34) + '...' : value}`).join(NEWLINE));
 				console.log();
 			}
 			const accepted = req.accepted;
 			if (accepted && !accepted.includes('*/*') && !accepted.includes(this.type))
 				console.warn(`    * 😕 WARNING: "${this.type}" is not specified in recipient's accept list.\n`);
 
-			const status = this.status;
 			console.log(`   ${
 				status >= 500 ? '🔴' :
 					status >= 400 ? '⭕' :
@@ -440,7 +570,7 @@ export class Response extends Type({
 			this.close();
 			onerror(e);
 		});
-		this.onabort(() => {
+		this.onabort(e => {
 			console.log(  ` 🙅 USER ABORTED FILE STREAM ${e}                 `);
 			console.log(  '------------------------------------------------------------ ');
 			stream.destroy();
@@ -674,6 +804,7 @@ export class Listener extends Type({
 	drain: Function
 }) {
 	#peers = new Peers();
+	static SOCKETS_IN_USE = 0;
 
 	constructor(mountpoint, hooks, middleware) {
 		if (is.function(hooks))
@@ -681,7 +812,7 @@ export class Listener extends Type({
 				message: hooks
 			};
 		super({
-			compression: DISABLED,
+			compression: Server.DISABLED,
 			maxPayloadLength: 16 * 1024,
 			maxBackpressure: 1024,
 			idleTimeout: 0,
@@ -694,8 +825,10 @@ export class Listener extends Type({
 				console.log(`  ROUTE: ${mountpoint}`);
 				console.log(`  PEERS: ${this.#peers.length}`);
 				console.log('------------------------------------------------------------');
-				SOCKETS_IN_USE++;
-				hooks.open && hooks.open(socket, this.#peers);
+
+				Listener.SOCKETS_IN_USE++;
+				hooks.open?.(socket, this.#peers);
+
 				console.log(`  TIME: ${socket.time}ms`);
 				console.log('------------------------------------------------------------');
 			},
@@ -737,8 +870,9 @@ export class Listener extends Type({
 				console.log(`  REASON: ${code} ${reason}`);
 				console.log(`  PEERS: ${this.#peers.length}`);
 				console.log('------------------------------------------------------------');
-				SOCKETS_IN_USE--;
-				hooks.close && hooks.close(code, reason, socket, this.#peers);
+
+				Listener.SOCKETS_IN_USE--;
+				hooks.close?.(code, reason, socket, this.#peers);
 
 				console.log(`  TIME: ${socket.time}ms`);
 				console.log('------------------------------------------------------------');
@@ -752,7 +886,7 @@ export class Listener extends Type({
 				console.log(`  BACK PRESSURE: ${socket.backpressure}`);
 				console.log('------------------------------------------------------------');
 
-				hooks.drain && hooks.drain(socket, this.#peers);
+				hooks.drain?.(socket, this.#peers);
 
 				console.log(`  TIME: ${socket.time}ms`);
 				console.log('------------------------------------------------------------');
@@ -822,6 +956,7 @@ export class Surf extends Emitter {
 	#router;
 	#handling = false;
 	#requests = 0;
+	#sessions;
 
 	#middleware = [];
 	#bodyware = {
@@ -883,6 +1018,11 @@ export class Surf extends Emitter {
 		this.socketware(SOCKETWARE);
 	}
 
+	sessionware(intercept = {}) {
+		this.#sessions = new Collection(intercept);
+		return this;
+	}
+
 	middleware(...intercepts) {
 		this.#middleware.push(...intercepts);
 		return this;
@@ -903,7 +1043,6 @@ export class Surf extends Emitter {
 
 	parse(router, mount = SLASH) {
 		const app = this.#app;
-		// const INDENT = mount.split(SLASH).filter(DO_NOTHING).map(() => '  ').join('');
 		
 		console.log(  '------------------------------------------------------------ ');
 		if (mount === SLASH)
@@ -951,6 +1090,15 @@ export class Surf extends Emitter {
 							this.#handling = true;
 							this.#requests++;
 
+							console.log(`\r 📥 INCOMING REQUEST [${
+								req.getMethod().toUpperCase()
+							} ${
+								req.getHeader('content-type') || '*/*'
+							} ${
+								req.getHeader('accept')?.split(SEMI)[0]
+							}]`);
+							console.log(  '------------------------------------------------------------ ');
+
 							let response =
 								new Response(
 									res,
@@ -961,18 +1109,17 @@ export class Surf extends Emitter {
 									pattern,
 									req,
 									response,
-									this.#bodyware.parse
+									this.#bodyware.parse,
+									this.#sessions
 								);
 
-							console.log(`\r 📥 INCOMING REQUEST [${request.method} ${request.type}]          `);
-							console.log(  '------------------------------------------------------------ ');
 							console.log(  `  ORIGIN: ${request.ip}`);
 							console.log(  `  URI: ${request.host}${request.uri}`);
 							console.log(  `  ROUTE: ${request.route}`);
-							console.log();
 							console.log(request.headers.map(([key, value]) =>
-								`  ${key.toUpperCase()} = ${
-									value.length > 34 ? value.substr(0, 34) + '...' : value
+								`  ${key} = ${
+									value.length > 34 ?
+										value.substr(0, 34) + '...' : value
 								}`).join(NEWLINE));
 							console.log(  '------------------------------------------------------------ ');
 
@@ -1012,7 +1159,7 @@ export class Surf extends Emitter {
 
 		console.log('------------------------------------------------------------ ');
 		console.log(` 🏄 STARTING SURF SERVER                          `);
-		console.log(` 📆 ${new Date().toLocaleString().replace(',', ' ⌚')}`);
+		console.log(` 📆 ${new Date().toLocaleString().replace(COMMA, ' ⌚')}`);
 		this.#app = (env => {
 			const key_file_name = env.KEY_FILE;
 			const cert_file_name = env.CERT_FILE;
@@ -1042,7 +1189,11 @@ export class Surf extends Emitter {
 						process.stdout.write(
 							`\r 💁 REQUESTS: ${
 								this.#requests
-							}  👥 PEERS: ${SOCKETS_IN_USE}  ${
+							}  👥 PEERS: ${
+								Listener.SOCKETS_IN_USE
+							}  🎫 SESSIONS: ${
+								this.#sessions?.size || 0
+							}  ${
 								CLOCK[uptime % 12]
 							} UPTIME: ${
 								uptime

@@ -11,6 +11,10 @@ import { Model } from "zed";
 import surf from "./index.js";
 import Templates from "./bodyware/templates.js";
 import Directory from "./routers/directory.js";
+import JsonFiles from "./sessionware/json-files.js";
+
+// import prisma from "@prisma/client";
+// const { PrismaClient } = prisma;
 
 class Update extends Model({
 	sender: String,
@@ -58,12 +62,13 @@ class Rooms extends Map {
 }
 
 const DIR = dirname(fileURLToPath(import.meta.url));
+const SESSION_DIR = `${DIR}/data/sessions`;
 const CHATROOMS = new Rooms;
+// const DB = new PrismaClient(); // <-- Cool. Cool cool cool. It's all about the db, baby.
 
 surf({
-	// Favicons and the like:
-	...new Directory(`${DIR}/public/icons`),
-	...new Directory(`${DIR}/public`, "icons/"),
+	...new Directory(`${DIR}/public/icons`), // Append our icons to the root
+	...new Directory(`${DIR}/public`, "icons/"), // Append our public folder (except icons/) to root.
 	"/": {
 		get(req, res) {
 			res.title = 'Surf Chat Server';
@@ -102,6 +107,9 @@ surf({
 		}
 	},
 })
+.sessionware(
+	new JsonFiles(SESSION_DIR)
+)
 .bodyware(
 	new Templates('WAVE', DIR),
 )
