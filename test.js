@@ -110,6 +110,9 @@ surf({
 .sessionware(
 	new JsonFiles(SESSION_DIR)
 )
+.middleware((req, res) => {
+	// Right... So here we need
+})
 .bodyware(
 	new Templates('WAVE', DIR),
 )

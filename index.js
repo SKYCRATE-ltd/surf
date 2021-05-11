@@ -120,7 +120,7 @@ class Collection extends Map {
 				if (item.expired())
 					this.delete(id);
 			});
-		}, 1000 * 60); // Every sixty seconds
+		}, 30000); // Every thirty seconds
 	}
 
 	load(map) {
