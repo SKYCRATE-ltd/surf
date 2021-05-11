@@ -78,7 +78,7 @@ class Binary extends Type {
 	}
 }
 
-class Session extends Type({
+class Entry extends Type({
 	id: String,
 	createdAt: Date,
 	updatedAt: Date,
@@ -87,7 +87,13 @@ class Session extends Type({
 }) {
 	constructor(values) {
 		super(values);
-		this.reset();
+		if (!this.expiresAt)
+			this.reset();
+	}
+
+	update(data) {
+		this.data = this.data?.assign(data) ?? data;
+		return this.reset();
 	}
 
 	reset(duration = 60000 * 10/* 10 mins from now is the default, baby */) {
@@ -118,7 +124,15 @@ class Collection extends Map {
 	}
 
 	load(map) {
-		map.forEach(([id, item]) => this.set(id, new Session(item)));
+		map.forEach(([id, item]) => {
+			const session = this.set(id, new Entry(item));
+			console.log(`\r 💾 LOADING SESSION                                          `);
+			console.log(  '------------------------------------------------------------ ');
+			console.log(  `  ID: ${session.id}`);
+			console.log(  `  CREATED: ${session.createdAt.toLocaleTimeString()}`);
+			console.log(  `  EXPIRES: ${session.expiresAt.toLocaleTimeString()}`);
+			console.log(  '------------------------------------------------------------ ');
+		});
 		return this;
 	}
 
@@ -127,7 +141,7 @@ class Collection extends Map {
 			return this.create();
 		
 		const createdAt = new Date();
-		const session = new Session({
+		const session = new Entry({
 			id,
 			createdAt,
 			updatedAt: createdAt
@@ -168,9 +182,9 @@ class Collection extends Map {
 		const session = this.get(id);
 
 		if (session) {
-			session.data?.assign(data).reset();
+			session.update(data);
 
-			console.log(`\r ✍ UPDATING SESSION                                          `);
+			console.log(`\r ✍  UPDATING SESSION                                          `);
 			console.log(  '------------------------------------------------------------ ');
 			console.log(  `  ID: ${id}`);
 			console.log(  `  CREATED: ${session.createdAt.toLocaleTimeString() || 'N/A'}`);
@@ -195,7 +209,7 @@ export class Request extends Type({
 	route: String,
 	uri: String,
 	method: String,
-	session: Session,
+	session: Entry,
 	host: Hook(
 		req => req.header('host') || 'localhost'
 	),
@@ -468,16 +482,16 @@ export class Response extends Type({
 				);
 
 			// TODO: console outputs should be a hook/callback
-			console.log(`\r 📤 OUTBOUND RESPONSE [${this.type}]              `);
+			console.log(`\r 📤 OUTBOUND RESPONSE ${req.uri} [${this.type}]              `);
 			console.log(  '------------------------------------------------------------ ');
 			console.log(  `  DESTINATION: ${this.ip}                         `);
-			console.log(  `  URI: ${req.host}${req.uri}                      `);
+			console.log(  `  HOST: ${req.host}`);
 			console.log(  `  ROUTE: ${req.route}                             `);
 			console.log();
 
 			if (this.headers.length) {
 				console.log(this.headers.map(([key, value]) =>
-					`  ${key} = ${value.length > 34 ? value.substr(0, 34) + '...' : value}`).join(NEWLINE));
+					`  ${key} = ${value.length > 54 ? value.substr(0, 54) + '...' : value}`).join(NEWLINE));
 				console.log();
 			}
 			const accepted = req.accepted;
@@ -592,10 +606,9 @@ export class Response extends Type({
 		const req = this.#request;
 		const res = this.#response;
 
-		console.log(`\r 📂 FILE HEAD [${type}]                         `);
+		console.log(`\r 📂 FILE HEAD ${req.uri} [${type}]                         `);
 		console.log('------------------------------------------------------------ ');
 		console.log(`  DESTINATION: ${this.ip}`);
-		console.log(`  URI: ${req.host}${req.uri}`);
 		console.log(`  PATH: ${filename}`);
 		console.log(`  SIZE: ${size}`);
 		console.log('------------------------------------------------------------ ');
@@ -607,10 +620,7 @@ export class Response extends Type({
 	}
 
 	file(filename, success, onerror, onabort) {
-		console.log(`\r 💾 FILE DOWNLOAD                                 `);
-		console.log(  '------------------------------------------------------------ ');
-		console.log(  ` 🌐 ${this.#request.uri}`);
-		console.log(  ` 💻 ${filename}`);
+		console.log(`\r 💾 FILE DOWNLOAD @ ${ this.#request.host }${ this.#request.uri }`);
 		console.log(  '------------------------------------------------------------ ');
 		return exists(filename) ?
 			this.stream(
@@ -1090,14 +1100,10 @@ export class Surf extends Emitter {
 							this.#handling = true;
 							this.#requests++;
 
-							console.log(`\r 📥 INCOMING REQUEST [${
-								req.getMethod().toUpperCase()
-							} ${
-								req.getHeader('content-type') || '*/*'
-							} ${
-								req.getHeader('accept')?.split(SEMI)[0]
-							}]`);
-							console.log(  '------------------------------------------------------------ ');
+							console.log();
+							console.log('------------------------------------------------------------ ');
+							console.log(` 📥 INCOMING REQUEST ${ req.getMethod().toUpperCase() } ${ req.getUrl() } [${ req.getHeader('content-type') || '*/*' }]`);
+							console.log('------------------------------------------------------------ ');
 
 							let response =
 								new Response(
@@ -1113,15 +1119,16 @@ export class Surf extends Emitter {
 									this.#sessions
 								);
 
-							console.log(  `  ORIGIN: ${request.ip}`);
-							console.log(  `  URI: ${request.host}${request.uri}`);
-							console.log(  `  ROUTE: ${request.route}`);
+							console.log(`  ORIGIN: ${request.ip}`);
+							console.log(`  HOST: ${request.host}`);
+							console.log(`  ROUTE: ${request.route}`);
+							console.log();
 							console.log(request.headers.map(([key, value]) =>
 								`  ${key} = ${
-									value.length > 34 ?
-										value.substr(0, 34) + '...' : value
+									value.length > 54 ?
+										value.substr(0, 54) + '...' : value
 								}`).join(NEWLINE));
-							console.log(  '------------------------------------------------------------ ');
+							console.log('------------------------------------------------------------ ');
 
 							const middleware = this.#middleware;
 							for (let index = 0, l = middleware.length; index < l; index++) {
@@ -1130,6 +1137,7 @@ export class Surf extends Emitter {
 							}
 
 							const output = await hook(request, response);
+							
 							if (output && output !== HANDLED) {
 								if (output === YIELD) {
 									console.log(`- 🚩 YIELD ${request.route}`);
@@ -1138,7 +1146,11 @@ export class Surf extends Emitter {
 								else
 									await response.send(output);
 							}
-
+							
+							const session = request.session;
+							if (session)
+								this.#sessions.update(session.id, session.data);
+							
 							this.#handling = false;
 						}
 					)
