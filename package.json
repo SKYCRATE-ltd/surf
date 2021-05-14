@@ -25,9 +25,9 @@
   "homepage": "https://github.com/SKYCRATE-ltd/surf#readme",
   "dependencies": {
     "@prisma/client": "^2.22.1",
-    "computer": "github:SKYCRATE-ltd/computer",
     "jst": "github:SKYCRATE-ltd/jst",
     "mime": "^2.5.2",
+    "srvr": "github:SKYCRATE-ltd/srvr",
     "uWebSockets.js": "github:uNetworking/uWebSockets.js#v19.2.0",
     "zed": "github:SKYCRATE-ltd/zed"
   },
