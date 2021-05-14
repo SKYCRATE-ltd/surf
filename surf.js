@@ -20,6 +20,11 @@ Program({
 	// Create a new project!
 	create() {
 		this.println('NOT YET IMPLEMENTED');
+
+		// create folder
+		// run git init?
+		// copy a package.json file with template
+		// scripts (termite and index.js)
 	},
 	sync(name) {
 		this.println('CONCAT SCHEMA FILES (NOT YET THOUGH)');
@@ -30,8 +35,14 @@ Program({
 	build() {
 		// bundle front-end components
 		// bundle front-end index
+		this.println('yab tings go here');
+		this.println('We can run a deamon...');
 	},
 	run() {
+		this.println('This should build before running...');
+		this.println('Since we are running, might as well run the build deamon');
+		this.println('serve');
+
 
 	}
 })(...process.argv.slice(2));
