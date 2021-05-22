@@ -24,7 +24,7 @@
   },
   "homepage": "https://github.com/SKYCRATE-ltd/surf#readme",
   "dependencies": {
-    "@prisma/client": "^2.22.1",
+    "@prisma/client": "^2.23.0",
     "jst": "github:SKYCRATE-ltd/jst",
     "mime": "^2.5.2",
     "srvr": "github:SKYCRATE-ltd/srvr",
@@ -33,6 +33,6 @@
     "zed": "github:SKYCRATE-ltd/zed"
   },
   "devDependencies": {
-    "prisma": "^2.22.1"
+    "prisma": "^2.23.0"
   }
 }

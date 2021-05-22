@@ -1,5 +1,5 @@
 import { Type } from "zed";
-import { HANDLED } from "../constants.js";
+import { HANDLED, BAD_REQUEST } from "../constants.js";
 import { Endpoint } from "../index.js";
 
 const SUBSCRIBE = 'subscribe';
@@ -40,7 +40,7 @@ export default class Webhook extends Type(Endpoint) {
 				
 				console.log(  ` ⛔ WEBHOOK VALIDATION FAILED                                `);
 				console.log(  '------------------------------------------------------------ ');
-				return req.bad_request();
+				return BAD_REQUEST;
 			},
 			post(res, req) {
 				req.body(data => {
@@ -58,7 +58,7 @@ export default class Webhook extends Type(Endpoint) {
 							});
 						} else if (data.object === USER) {
 							console.log(`  USER: ${entry.id}`);
-							console.log(`  CHANGES: ${entry.changes.length}`);
+							console.log(`  UPDATES: ${entry.changes.length}`);
 							console.log('------------------------------------------------------------ ');
 
 							hooks.user?.(entry);

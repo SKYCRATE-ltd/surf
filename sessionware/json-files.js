@@ -16,11 +16,27 @@ export default class JsonFiles extends Type {
 				);
 			},
 			create(session) {
-				write(`${SESSION_DIR}/${session.id}`, JSON.stringify(session));
+				write(
+					`${SESSION_DIR}/${session.id}`,
+					JSON.stringify(session.map(([key, value]) => {
+						return [
+							key,
+							value?.constructor?.stringify?.(value) ?? value
+						];
+					}), null, '\t')
+				);
 				return session;
 			},
 			update(session) {
-				write(`${SESSION_DIR}/${session.id}`, JSON.stringify(session));
+				write(
+					`${SESSION_DIR}/${session.id}`,
+					JSON.stringify(session.map(([key, value]) => {
+						return [
+							key,
+							value?.constructor?.stringify?.(value) ?? value
+						];
+					}), null, '\t')
+				);
 				return session;
 			},
 			delete(id) {

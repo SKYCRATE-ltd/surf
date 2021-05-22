@@ -31,9 +31,14 @@ import {
 	NEWLINE,
 
 	STATUS,
+
+	OK,
 	YIELD,
 	HANDLED,
-	DO_NOTHING
+	DO_NOTHING,
+	BAD_REQUEST,
+	UNAUTHORIZED,
+	BAD_METHOD
 } from "./constants.js";
 import {STATUS_CODES} from "http";
 import BODYWARE_JSON from "./bodyware/json.js";
@@ -126,12 +131,12 @@ class Collection extends Map {
 	load(map) {
 		map.forEach(([id, item]) => {
 			const session = this.set(id, new Entry(item));
+			console.log(  '------------------------------------------------------------ ');
 			console.log(`\r 💾 LOADING SESSION                                          `);
 			console.log(  '------------------------------------------------------------ ');
 			console.log(  `  ID: ${session.id}`);
 			console.log(  `  CREATED: ${session.createdAt.toLocaleTimeString()}`);
 			console.log(  `  EXPIRES: ${session.expiresAt.toLocaleTimeString()}`);
-			console.log(  '------------------------------------------------------------ ');
 		});
 		return this;
 	}
@@ -905,14 +910,7 @@ export class Listener extends Type({
 	}
 }
 
-export class Endpoint extends Type({
-	get: Function,
-	head: Function,
-	post: Function,
-	put: Function,
-	options: Function,
-	any: Function,
-}) {
+export class Endpoint extends Type {
 	constructor(hooks) {
 		if (is.function(hooks))
 			hooks = {
@@ -1138,11 +1136,30 @@ export class Surf extends Emitter {
 
 							const output = await hook(request, response);
 							
-							if (output && output !== HANDLED) {
+							if (is.undefined(output))
+								return this.send(
+									`${
+										STATUS.BadGateway
+									} Bad Gateway -- ${
+										request.method
+									} handler returned UNDEFINED`,
+
+									STATUS.BadGateway
+								);
+
+							if (output !== HANDLED) {
 								if (output === YIELD) {
 									console.log(`- 🚩 YIELD ${request.route}`);
 									console.log('------------------------------------------------------------ ');
 								}
+								else if (output === BAD_REQUEST)
+									await request.bad_request();
+								else if (output === BAD_METHOD)
+									await request.bad_method();
+								else if (output === UNAUTHORIZED)
+									await response.unauthorized();
+								else if (output === OK)
+									await response.send(); // Just say hello!
 								else
 									await response.send(output);
 							}

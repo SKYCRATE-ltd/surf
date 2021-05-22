@@ -1,4 +1,4 @@
- import {
+import {
 	fileURLToPath
 } from "url";
 import {
@@ -12,9 +12,6 @@ import surf from "./index.js";
 import Templates from "./bodyware/templates.js";
 import Directory from "./routers/directory.js";
 import JsonFiles from "./sessionware/json-files.js";
-
-// import prisma from "@prisma/client";
-// const { PrismaClient } = prisma;
 
 class Update extends Model({
 	sender: String,
@@ -116,5 +113,5 @@ surf({
 .bodyware(
 	new Templates('WAVE', DIR),
 )
-.listen(80);
+.listen(8080);
 
