@@ -9,8 +9,8 @@ import Program from "termite";
 
 import Templates from "./bodyware/templates.js";
 import JsonFiles from "./sessionware/json-files.js";
-import surf from "./index.js";
 
+import surf from "./index.js";
 import App from "./app.js";
 
 const DIR = dirname(fileURLToPath(import.meta.url));
@@ -69,7 +69,11 @@ Program({
 			this.pass('sync', `UPDATE: ${uuid()}`);
 		}
 	},
-	sync(name = uuid()) {
+	sync() {
+		this.println('CONCAT SCHEMA FILES (NOT YET THOUGH)');
+		exec(`npx prisma db push --accept-data-loss`); // If we're using db-push... we're prototyping anyway
+	},
+	migrate(name = uuid()) {
 		this.println('CONCAT SCHEMA FILES (NOT YET THOUGH)');
 		exec(`npx prisma migrate dev --name ${name}`);
 	},

@@ -74,6 +74,7 @@ export default class Crud extends Class(Router) {
 				),
 				...new Update(
 					name,
+					descriptor,
 					async (model, id, body, req, res) =>
 						await hooks.update?.(model, id, body, req, res) ?? NOT_FOUND
 				),

@@ -13,6 +13,10 @@ import {
 } from "crux";
 import {
 	Type,
+	Interface,
+	Model,
+	Class,
+	Options,
 	Emitter,
 	UInt,
 	Any,
@@ -73,17 +77,64 @@ const QUERY = (query, delim = AND) =>
 			)
 	)) : {};
 
-class Binary extends Type {
+export class Binary extends Type {
 	static validate() {
 		return false;
 	}
 	static defines(instance) {
 		return instance.constructor === ArrayBuffer ||
-					instance.constructor.__proto__ === Uint8Array.constructor.__proto__;
+					instance.constructor.__proto__ === Uint8Array ||
+						instance.constructor.__proto__ === Uint8Array.constructor.__proto__;
 	}
 }
 
-class Entry extends Type({
+export const File = Model(`File<...T>`, {
+	init(...mime_types) {
+		return Interface(`File<${mime_types.join(PIPE)}>`, {
+			filename: String,
+			type: Options(...mime_types),
+			data: Binary, // <-- This should work...
+		});
+	}
+});
+
+export class Username extends Class(String) {
+	static validate(str) {
+		// SHould we allow any other characters?
+		return /^[a-z0-9-_=\.$]+$/i.test(str);
+	}
+};
+
+export class OneLiner extends Class(String) {
+	static validate(str) {
+		return /^[^\n\r]/.test(str);
+	}
+}
+
+export class Email extends Class(String, {
+	user: String,
+	domain: String
+}) {
+	constructor(...args) {
+		super(...args);
+		const [
+			user,
+			domain
+		] = this.split('@');
+	}
+	toString() {
+		return `${this.user}@${this.domain}`;
+	}
+	static validate(str) {
+		return /^\S+@\S+\.\S+$/.test(str);
+	}
+}
+
+export class PhoneNumber extends Class(String) {
+	// All these types will be good for chatbots... need to store these elsewhere....
+}
+
+export class Entry extends Type({
 	id: String,
 	createdAt: Date,
 	updatedAt: Date,
@@ -111,7 +162,7 @@ class Entry extends Type({
 	}
 }
 
-class Collection extends Map {
+export class Collection extends Map {
 	#hooks;
 
 	constructor(hooks) {
@@ -371,7 +422,10 @@ export class Response extends Type({
 	get id() {
 		const routes = this.#request.route.split(SLASH);
 		const last = routes.pop();
-		routes.push(last.startsWith(COLON) ? 'item' : 'index');
+		if (last)
+			routes.push(last.startsWith(COLON) ? 'item' : `${last}/index`);
+		else
+			routes.push('index');
 		return routes.filter(x => x && !x.startsWith(COLON)).join(SLASH);
 	}
 
@@ -972,7 +1026,19 @@ export class Surf extends Emitter {
 			// MULTIPART FORM DATA REQUEST
 			[
 				req => req.type.startsWith('multipart/form-data'),
-				(body, req) => this.#app.getParts(body, req.type)
+				(body, req) => {
+					return Object.fromEntries(new Map(
+						this.#app.getParts(body, req.type)
+							.map(({ type, name, filename, data }) => {
+								return [
+									name,
+									type ?
+										{ type, filename, data } :
+											DECODE(data)  // String()?
+								];
+							})
+					));
+				}
 			],
 			// FORM DATA REQUEST
 			[
@@ -982,7 +1048,7 @@ export class Surf extends Emitter {
 			// PLAIN TEXT (DEFAULT)
 			[
 				req => req.type === 'text/plain',
-				body => String(body),
+				body => String(body), // <-- Should this be DECODE()?
 			],
 			// TODO: handle binary by default
 		],
@@ -995,14 +1061,14 @@ export class Surf extends Emitter {
 			// PLAIN TEXT RESPONSE (DEFAULT)
 			[
 				() => true,
-				body => String(body)
+				body => String(body) // <-- This is fine.
 			]
 			// TODO: handle binary by default
 		]
 	};
 	#socketware = {
 		parse(string) {
-			return String(value);
+			return DECODE(value);
 		},
 		stringify(value) {
 			return String(value);

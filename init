@@ -1,0 +1,7 @@
+#!/usr/bin/bash
+
+npm i
+npx prisma db push
+
+# That should be all folks!
+# we can maybe do some other things here like check if uuid is installed

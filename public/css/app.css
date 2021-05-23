@@ -16,7 +16,7 @@
 	font-style:normal;
 }
 
-  @font-face {
+@font-face {
 	font-family:'Hack';
 	src: url('fonts/hack-italic.woff2?sha=3114f1256') format('woff2'), url('fonts/hack-italic.woff?sha=3114f1256') format('woff');
 	font-weight:400;
@@ -45,7 +45,7 @@ body {
 	background-color:var(--black);
 	color:var(--white);
 	font-family:Hack, monospace;
-	font-size:16pt;
+	font-size:13pt;
 }
 
 #content {
@@ -63,6 +63,10 @@ header button.delete {
 	position:absolute;
 	right:0;
 	top:5pt;
+}
+
+* {
+	outline:none;
 }
 
 h1 {

@@ -1,9 +1,5 @@
 <h1>${ item.name }</h1>
 
-<div>
-	<label>handle:</label>
-	<input id="handle" type="text" placeholder="Enter username..." />
-</div>
 <div id="messages">
 	${ await iterate(item.messages, "message", "div") }
 </div>
@@ -48,6 +44,12 @@
 	const send = document.getElementById('send');
 	const messages = document.getElementById('messages');
 
+	// We'll need to do some authentication first...
+	// Get a token from the server...
+	// We can create an endpoint for this!
+	// It uses the session to append a token that can
+	// be verified with some middleware
+	// (we could probably do this with AJAX calls automagicvally)
 	const sock = new Socket({
 		open() {
 			console.log('OPENED SOCKET!');
