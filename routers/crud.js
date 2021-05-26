@@ -4,9 +4,19 @@ import { Store, Index, Create, Read, Update, Delete } from "../endpoints/store.j
 import { Router } from "../index.js";
 
 export default class Crud extends Class(Router) {
+	// Do we place the descriptor and authware here? Or keep it as functions?
+	// but we map the authware to => index, create, read, update, delete
+
+	// Also, we might want to say a whole section of a site requires certain privileges...
+	// this is where we get into middleware and the like... but it's mostly used for Authorisation...
+	// How can we attach this to the Router?
 	constructor(name, descriptor, hooks, options = {}) {
 		const { incr = 10 } = options;
 		
+		// How should we handle the authorisation @ each point?
+		// We basically want to do Router oriented Authority at this point...
+		// So, the question is, now that we have authority at each method at each
+		// endpoint, how do we 
 		super({
 			"/": {
 				...new Index(
@@ -21,11 +31,6 @@ export default class Crud extends Class(Router) {
 						await hooks.create?.(model, body, req, res) ?? UNAUTHORIZED
 				),
 			},
-			"/new": new Store(
-						name,
-						async (model, req, res) =>
-							await hooks.new?.(model, req, res) ?? NOT_FOUND
-						),
 			"/page/:page": new Store(
 				name,
 				async (model, req, res) => {
@@ -83,11 +88,12 @@ export default class Crud extends Class(Router) {
 					async (model, id, req, res) =>
 						await hooks.delete?.(model, id, req, res) ?? NOT_FOUND
 				),
+
 			},
-			"/:id/edit": new Store(
+			"/:id/edit": new Read(
 							name,
-							async (model, req, res) =>
-								await hooks.edit?.(model, req.args.id, req, res) ?? NOT_FOUND
+							async (model, id, req, res) =>
+								await hooks.edit?.(model, id, req, res) ?? NOT_FOUND
 						),
 		});
 	}

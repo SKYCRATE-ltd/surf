@@ -76,6 +76,12 @@ const QUERY = (query, delim = AND) =>
 					.filter(DO_NOTHING)
 			)
 	)) : {};
+const VALIDATOR = (validator, hook) => async (req, res) => {
+	const body = await req.body();
+	if (validator(body))
+		return await hook(body, req, res);
+	return BAD_REQUEST;
+};
 
 export class Binary extends Type {
 	static validate() {
@@ -389,6 +395,17 @@ export class Request extends Type({
 		return this.#response.send(body, STATUS.MethodNotAllowed);
 	}
 
+	unauthorized(type = 'Basic', realm = "Access to privileged data.") {
+		const status = STATUS.Unauthorized;
+		return this.#response.send(
+			`${status} ${STATUS_CODES[status].toUpperCase()} => "${realm}"`,
+			status,
+			[
+				["WWW-Authenticate", `${type} realm="${realm}", charset="UTF-8"`]
+			]
+		);
+	}
+
 	yield(y = true) {
 		return this.#request.setYield(y) && YIELD;
 	}
@@ -602,23 +619,12 @@ export class Response extends Type({
 		return this.send(body, STATUS.NotFound);
 	}
 
-	error(body = `${STATUS.InternalServerError} INTERNAL SERVER ERROR`) {
-		return this.send(body, STATUS.InternalServerError);
-	}
-
-	unauthorized(type = 'Basic', realm = "Access to privileged data.") {
-		const status = STATUS.Unauthorized;
-		return this.send(
-			`${status} ${STATUS_CODES[status].toUpperCase()} => "${realm}"`,
-			status,
-			[
-				["WWW-Authenticate", `${type} realm="${realm}", charset="UTF-8"`]
-			]
-		);
-	}
-
 	forbidden(body = `${STATUS.Forbidden} ACCESS FORBIDDEN`) {
 		return this.send(body, STATUS.Forbidden);
+	}
+
+	error(body = `${STATUS.InternalServerError} INTERNAL SERVER ERROR`) {
+		return this.send(body, STATUS.InternalServerError);
 	}
 
 	stream(
@@ -965,6 +971,9 @@ export class Listener extends Type({
 }
 
 export class Endpoint extends Type {
+	#descriptor = Interface({});
+	#authware = {};
+
 	constructor(hooks) {
 		if (is.function(hooks))
 			hooks = {
@@ -973,14 +982,56 @@ export class Endpoint extends Type {
 		
 		if (!hooks.any)
 			hooks.any = req => req.bad_method();
-		
-		super(hooks);
+
+		hooks = hooks.map(([method, hook]) => [
+			method,
+			method === 'post' || method === 'put' ?
+				VALIDATOR(
+					hook,
+					body => body instanceof this.#descriptor
+				) :
+				method === 'patch' ?
+					VALIDATOR(
+						hook,
+						Object.entries(body).every(
+							([key, value]) =>
+								descriptor[key] ?? value instanceof descriptor[key]
+						)
+					) : hook
+		]);
+
+		super(hooks.map(
+			([method, hook]) =>
+				[
+					method,
+					async (req, res) =>
+						(this.#authware[method]?.(req, res) ?? true) ? await hook(req, res) : UNAUTHORIZED
+				]
+		));
+	}
+
+	validware(descriptor) {
+		if (!descriptor)
+			return this.#descriptor;
+		this.#descriptor = Interface(descriptor);
+		return this;
+	}
+
+	authware(hooks) {
+		if (is.function(hooks))
+			hooks = {
+				get: hooks
+			};
+		this.#authware = hooks;
+		return this;
 	}
 }
 
 export class Router extends Type(Emitter, {
 	_name: String
 }) {
+	#authware = {};
+	// Add Authware here?
 	constructor(name, routes) {
 		super();
 
@@ -1006,10 +1057,16 @@ export class Router extends Type(Emitter, {
 						pattern,
 						endpoint.constructor === Object ||
 							is.function(endpoint) ?
+								// maybe add some authware here...
+								// Might need to arrange some stuff.
 								new Endpoint(endpoint) : endpoint
 					]
 			)
 		);
+	}
+	authware(hook) {
+		this.#authware = hook; // <= this is a function
+		return this;
 	}
 }
 
@@ -1223,7 +1280,7 @@ export class Surf extends Emitter {
 								else if (output === BAD_METHOD)
 									await request.bad_method();
 								else if (output === UNAUTHORIZED)
-									await response.unauthorized();
+									await request.unauthorized();
 								else if (output === OK)
 									await response.send(); // Just say hello!
 								else

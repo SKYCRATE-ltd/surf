@@ -1,6 +1,5 @@
 import prisma from "@prisma/client";
 import { is } from "crux";
-import { Interface } from "zed";
 import { NOT_FOUND, BAD_METHOD, BAD_REQUEST, UNAUTHORIZED } from "../constants.js";
 import { Endpoint } from "../index.js";
 
@@ -9,7 +8,7 @@ export const client = new PrismaClient();
 export default client;
 
 export class Store extends Endpoint {
-	constructor(name, hooks, authorise = req => true) {
+	constructor(name, hooks) {
 		const model = client[name.toLowerCase()];
 
 		if (!model)
@@ -36,7 +35,7 @@ export class Store extends Endpoint {
 }
 
 export class Index extends Store {
-	constructor(name, hook, authorise, options = {}) {
+	constructor(name, hook, options = {}) {
 		super(name, {
 			async get(model, req, res) {
 				const {
@@ -78,60 +77,68 @@ export class Index extends Store {
 
 				return await hook(model, { page, incr }, req, res) ?? NOT_FOUND;
 			}
-		}, authorise);
+		});
 	}
 }
 
-export class Create extends Store {
-	constructor(name, descriptor, hook, authorise) {
-		super(name, {
-			async post(model, req, res) {
-				const body = await req.body();
-				if (!(body instanceof Interface(name, descriptor)))
-					return BAD_REQUEST;
-				return await hook(model, body, req, res);
-			}
-		}, authorise);
+export class Form extends Store {
+	constructor(name, descriptor, hooks) {
+		if (is.function(hooks))
+			hooks = {
+				get: hooks
+			};
+		
+		super(name, hooks); // <-- More than this?
+		this.validware(descriptor);
 	}
 }
 
 export class Read extends Store {
-	constructor(name, hook, authorise) {
-		super(name, {
-			async get(model, req, res) {
-				return await hook(model, req.args.id, req, res);
-			}
-		}, authorise);
+	constructor(name, authority, hook) {
+		super(name, async (model, req, res) =>
+			await hook(model, req.args.id ?? -1, req, res));
 	}
 }
 
-export class Update extends Store {
-	constructor(name, descriptor, hook, authorise) {
-		super(name, {
+export class Create extends Form {
+	constructor(name, authority, descriptor, hook) {
+		super(name, descriptor, {
+			async post(model, req, res) {
+				return await hook(model, body, req, res);
+			}
+		});
+		this.authware({
+			post: authority
+		});
+	}
+}
+
+export class Update extends Form {
+	constructor(name, authority, descriptor, hook) {
+		super(name, descriptor, {
 			async patch(model, req, res) {
-				const body = await req.body();
-				if (entries(body).every(([key, value]) => descriptor[key] ?? value instanceof descriptor[key]))
-					return await hook(model, req.args.id, body, req, res);
-				return BAD_REQUEST;
+				return await hook(model, req.args.id ?? -1, body, req, res);
 			},
 			async put(model, req, res) {
-				const body = await req.body();
-				if (body instanceof Interface(name, descriptor))
-					return await hook(model, req.args.id, body, req, res);
-				return BAD_REQUEST;
+				return await hook(model, req.args.id ?? -1, body, req, res);
 			}
-		}, authorise);
+		});
+		this.authware({
+			patch: authority,
+			put: authority // <-- This MIGHT change
+		});
 	}
 }
 
 export class Delete extends Store {
-	constructor(name, hook, authorise) {
+	constructor(name, authority, hook) {
 		super(name, {
 			async del(model, req, res) {
-				if (!authorise(req))
-					return UNAUTHORIZED;
-				return await hook(model, req.args.id, req, res);
+				return await hook(model, req.args.id ?? -1, req, res);
 			}
-		}, authorise);
+		});
+		this.authware({
+			del: authority
+		});
 	}
 }

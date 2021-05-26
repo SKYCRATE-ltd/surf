@@ -74,6 +74,13 @@ export default class App extends Class(Router) {
 					}
 					req.session.update({user});
 					return res.redirect(`./${user.handle}`);
+				},
+				async new(model) {
+					// This is where we return a creation form...
+					// Is this how I should go about it?
+					return {
+
+					}
 				}
 			}),
 
