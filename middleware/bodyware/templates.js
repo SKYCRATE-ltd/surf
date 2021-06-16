@@ -1,10 +1,10 @@
-import { STATUS } from "../constants.js";
+import { STATUS } from "../src/constants.js";
 import JST from "jst/backend/index.js";
 
 export default class Templates extends JST {
 	stringify = []; // <-- Our bodyware hook
 
-	constructor(title, directory, cache, extension) {
+	constructor(directory, cache, extension) {
 		super(`${directory}/views`, cache, extension);
 
 		const master_render = this.layout('layout');
@@ -14,7 +14,6 @@ export default class Templates extends JST {
 			req => req.accepted.includes('text/html'),
 
 			async (body, req, res) => {
-				res.title = title;
 				res.type = "text/html";
 				const id = res.status === STATUS.OK ? res.id :
 							res.status === STATUS.NotFound ? 'not-found' : 'error';

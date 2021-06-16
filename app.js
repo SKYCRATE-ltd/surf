@@ -2,8 +2,8 @@ import { writeFileSync } from "fs";
 import { mkdir } from "computer";
 import { Class } from "zed";
 import { Router, File, Username } from "./index.js";
-import Crud from "./routers/crud.js";
-import Directory from "./routers/directory.js";
+import Crud from "./controllers/routers/crud.js";
+import Directory from "./controllers/routers/directory.js";
 
 // TODO: Why can't we just extend Router? Debug this...
 export default class App extends Class(Router) {

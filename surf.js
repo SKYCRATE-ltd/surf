@@ -41,15 +41,17 @@ Program({
 	},
 	run() {
 		// this.pass('build', '--watch');
+		const { PrismaClient } = require("@prisma/client");
 
 		surf(
-			new App(DIR)
+			"Surf.js - Surf's up!",
+			new App(DIR),
 		)
-		.sessionware(
-			new JsonFiles(SESSION_DIR)
+		.collections(
+			new PrismaClient()
 		)
 		.bodyware(
-			new Templates('ONSLAUGHT', DIR),
+			new Templates(DIR),
 		)
 		.listen(PORT);
 	},

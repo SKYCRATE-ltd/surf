@@ -1,4 +1,4 @@
-import { CODES } from "../constants.js";
+import { CODES } from "../src/constants.js";
 
 export default {
 	parse(string, socket) {

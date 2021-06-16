@@ -10,8 +10,8 @@ import { Model } from "zed";
 
 import surf from "./index.js";
 import Templates from "./bodyware/templates.js";
-import Directory from "./routers/directory.js";
-import JsonFiles from "./sessionware/json-files.js";
+import Directory from "./controllers/routers/directory.js";
+import JsonFiles from "./middleware/sessionware/json-files.js";
 
 class Update extends Model({
 	sender: String,
@@ -104,12 +104,9 @@ surf({
 		}
 	},
 })
-.sessionware(
-	new JsonFiles(SESSION_DIR)
+.collections(
+	new PrismaClient()
 )
-.middleware((req, res) => {
-	// Right... So here we need
-})
 .bodyware(
 	new Templates('WAVE', DIR),
 )

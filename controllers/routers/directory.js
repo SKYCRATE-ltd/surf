@@ -1,8 +1,8 @@
 import { read_dir, is_directory, is_file } from "computer";
 import { Class } from "zed";
-import { SLASH } from "../constants.js";
-import { Router } from "../index.js";
-import File from "../endpoints/file.js";
+import { SLASH } from "../../src/constants.js";
+import { Router } from "../../index.js";
+import File from "../endpoints/file.js.js";
 
 export default class Directory extends Class(Router) {
 	constructor(directory = '.', ...blacklist) {

@@ -1,4 +1,4 @@
-import { STATUS } from "../constants.js";
+import { STATUS } from "../src/constants.js";
 
 export default {
 	parse: [

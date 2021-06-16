@@ -1,31 +1,50 @@
 import { Class } from "zed";
-import { NOT_FOUND, UNAUTHORIZED } from "../constants.js";
+import { NOT_FOUND, UNAUTHORIZED } from "../../src/constants.js";
 import { Store, Index, Create, Read, Update, Delete } from "../endpoints/store.js";
-import { Router } from "../index.js";
+import { Router } from "../../index.js";
+
+const TRUE = () => true;
+const FALSE = () => false;
 
 export default class Crud extends Class(Router) {
-	// Do we place the descriptor and authware here? Or keep it as functions?
-	// but we map the authware to => index, create, read, update, delete
-
-	// Also, we might want to say a whole section of a site requires certain privileges...
-	// this is where we get into middleware and the like... but it's mostly used for Authorisation...
-	// How can we attach this to the Router?
-	constructor(name, descriptor, hooks, options = {}) {
+	constructor(name, authware, descriptor, hooks, options = {}) {
 		const { incr = 10 } = options;
+
+		/*
+			string,
+
+			{
+				// defaults....
+				any		=> true		<-- hook into Router
+				create	=> false	<-- hook into Endpoint...
+				read	=> true
+				update	=> false
+				delete	=> false
+			},
+
+			Interface descriptor,
+
+			{
+				index,
+				create,
+				read,
+				update,
+				delete,
+				edit
+			}
+		*/
 		
-		// How should we handle the authorisation @ each point?
-		// We basically want to do Router oriented Authority at this point...
-		// So, the question is, now that we have authority at each method at each
-		// endpoint, how do we 
 		super({
 			"/": {
 				...new Index(
 					name,
+					authware.read ?? TRUE,
 					async (model, info, req, res) =>
 						await hooks.index?.(model, info, req, res) ?? NOT_FOUND
 				),
 				...new Create(
 					name,
+					authware.create ?? FALSE,
 					descriptor,
 					async (model, body, req, res) =>
 						await hooks.create?.(model, body, req, res) ?? UNAUTHORIZED
@@ -33,6 +52,7 @@ export default class Crud extends Class(Router) {
 			},
 			"/page/:page": new Store(
 				name,
+				authware.read ?? TRUE,
 				async (model, req, res) => {
 					const { page } = req.args;
 
@@ -66,6 +86,7 @@ export default class Crud extends Class(Router) {
 			),
 			"/index/:index": new Store(
 				name,
+				authware.read ?? TRUE,
 				async (model, req, res) => {
 					const { index } = req.args;
 					return await hooks.index?.(model, { index, incr }, req, res) ?? NOT_FOUND;
@@ -74,27 +95,34 @@ export default class Crud extends Class(Router) {
 			"/:id": {
 				...new Read(
 					name,
+					authware.read ?? TRUE,
 					async (model, id, req, res) =>
 						await hooks.read?.(model, id, req, res) ?? NOT_FOUND
 				),
 				...new Update(
 					name,
+					authware.update ?? FALSE,
 					descriptor,
 					async (model, id, body, req, res) =>
 						await hooks.update?.(model, id, body, req, res) ?? NOT_FOUND
 				),
 				...new Delete(
 					name,
+					authware.delete ?? FALSE,
 					async (model, id, req, res) =>
 						await hooks.delete?.(model, id, req, res) ?? NOT_FOUND
 				),
-
+				// Should we put a listen here??
+				// It's not a bad idea...
+				// Plus we might wanna
 			},
-			"/:id/edit": new Read(
-							name,
-							async (model, id, req, res) =>
-								await hooks.edit?.(model, id, req, res) ?? NOT_FOUND
-						),
+			"/:id/edit":
+				new Read(
+					name,
+					authware.update ?? FALSE,
+					async (model, id, req, res) =>
+						await hooks.edit?.(model, id, req, res) ?? NOT_FOUND
+				),
 		});
 	}
 }

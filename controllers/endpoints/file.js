@@ -1,4 +1,4 @@
-import { HANDLED } from "../constants.js";
+import { HANDLED } from "../src/constants.js";
 import { Endpoint } from "../index.js";
 
 export default class File extends Endpoint {
